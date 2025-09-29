@@ -33,29 +33,29 @@ import java.util.concurrent.ConcurrentHashMap
  * This class provides the actual BLE functionality for Android devices
  */
 class BleNitroBleManager : HybridNativeBleNitroSpec() {
-    
+
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var stateCallback: ((state: BLEState) -> Unit)? = null
     private var bluetoothStateReceiver: BroadcastReceiver? = null
     private var restoreStateCallback: ((devices: List<BLEDevice>) -> Unit)? = null
-    
+
     // BLE Scanning
     private var bleScanner: BluetoothLeScanner? = null
     private var isCurrentlyScanning = false
     private var scanCallback: ScanCallback? = null
     private var deviceFoundCallback: ((device: BLEDevice?, error: String?) -> Unit)? = null
     private val discoveredDevicesInCurrentScan = mutableSetOf<String>()
-    
+
     // Device connections
     private val connectedDevices = ConcurrentHashMap<String, BluetoothGatt>()
     private val deviceCallbacks = ConcurrentHashMap<String, DeviceCallbacks>()
-    
+
     // Write callback storage for proper response handling (key: deviceId:characteristicId)
     private val writeCallbacks = ConcurrentHashMap<String, (Boolean, ArrayBuffer, String) -> Unit>()
-    
+
     // RSSI callback storage (key: deviceId)
     private val rssiCallbacks = ConcurrentHashMap<String, (Boolean, Double, String) -> Unit>()
-    
+
     // Helper class to store device callbacks
     private data class DeviceCallbacks(
         var connectCallback: ((success: Boolean, deviceId: String, error: String) -> Unit)? = null,
@@ -63,22 +63,22 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         var serviceDiscoveryCallback: ((success: Boolean, error: String) -> Unit)? = null,
         var characteristicSubscriptions: MutableMap<String, (characteristicId: String, data: ArrayBuffer) -> Unit> = mutableMapOf()
     )
-    
+
     init {
         // Try to get context from React Native application context
         tryToGetContextFromReactNative()
     }
-    
+
     companion object {
         private var appContext: Context? = null
-        
+
         fun setContext(context: Context) {
             appContext = context.applicationContext
         }
-        
+
         fun getContext(): Context? = appContext
     }
-    
+
     private fun tryToGetContextFromReactNative() {
         if (appContext == null) {
             try {
@@ -86,7 +86,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 val activityThread = Class.forName("android.app.ActivityThread")
                 val currentApplicationMethod = activityThread.getMethod("currentApplication")
                 val application = currentApplicationMethod.invoke(null) as? android.app.Application
-                
+
                 if (application != null) {
                     setContext(application)
                 }
@@ -95,7 +95,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             }
         }
     }
-    
+
     private fun initializeBluetoothIfNeeded() {
         if (bluetoothAdapter == null) {
             try {
@@ -110,7 +110,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
 
     private fun hasBluetoothPermissions(): Boolean {
         val context = appContext ?: return false
-        
+
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // Android 12+ (API 31+) - check new Bluetooth permissions
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
@@ -125,7 +125,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     private fun getMissingPermissions(): List<String> {
         val context = appContext ?: return emptyList()
         val missing = mutableListOf<String>()
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // Android 12+ permissions
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -143,15 +143,15 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 missing.add(Manifest.permission.BLUETOOTH_ADMIN)
             }
         }
-        
+
         // Location permissions for BLE scanning
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        
+
         return missing
     }
-    
+
     private fun bluetoothStateToBlEState(bluetoothState: Int): BLEState {
         return when (bluetoothState) {
             BluetoothAdapter.STATE_OFF -> BLEState.POWEREDOFF
@@ -161,7 +161,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             else -> BLEState.UNKNOWN
         }
     }
-    
+
     private fun createBluetoothStateReceiver(): BroadcastReceiver {
         return object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -173,23 +173,23 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             }
         }
     }
-    
+
     private fun createBLEDeviceFromScanResult(scanResult: ScanResult): BLEDevice {
         val device = scanResult.device
         val scanRecord = scanResult.scanRecord
-        
+
         // Extract manufacturer data
         val manufacturerData = scanRecord?.manufacturerSpecificData?.let { sparseArray ->
             val entries = mutableListOf<ManufacturerDataEntry>()
             for (i in 0 until sparseArray.size()) {
                 val key = sparseArray.keyAt(i)
                 val value = sparseArray.get(key)
-                
+
                 // Create direct ByteBuffer as required by ArrayBuffer.wrap()
                 val directBuffer = java.nio.ByteBuffer.allocateDirect(value.size)
                 directBuffer.put(value)
                 directBuffer.flip()
-                
+
                 entries.add(ManufacturerDataEntry(
                     id = key.toString(),
                     data = ArrayBuffer.wrap(directBuffer)
@@ -197,10 +197,10 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             }
             ManufacturerData(companyIdentifiers = entries.toTypedArray())
         } ?: ManufacturerData(companyIdentifiers = emptyArray())
-        
+
         // Extract service UUIDs
         val serviceUUIDs = scanRecord?.serviceUuids?.map { it.toString() }?.toTypedArray() ?: emptyArray()
-        
+
         return BLEDevice(
             id = device.address,
             name = device.name ?: "",
@@ -210,10 +210,10 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             isConnectable = true // Assume scannable devices are connectable
         )
     }
-    
+
     private fun createAndroidScanFilters(filter: com.margelo.nitro.co.zyke.ble.ScanFilter): List<android.bluetooth.le.ScanFilter> {
         val filters = mutableListOf<android.bluetooth.le.ScanFilter>()
-        
+
         // Add service UUID filters
         filter.serviceUUIDs.forEach { serviceId ->
             try {
@@ -225,21 +225,21 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 // Invalid UUID, skip
             }
         }
-        
+
         // If no specific filters, add empty filter to scan all devices
         if (filters.isEmpty()) {
             val builder = android.bluetooth.le.ScanFilter.Builder()
             filters.add(builder.build())
         }
-        
+
         return filters
     }
-    
+
     private fun createGattCallback(deviceId: String): BluetoothGattCallback {
         return object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 val callbacks = deviceCallbacks[deviceId]
-                
+
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
                         callbacks?.connectCallback?.invoke(true, deviceId, "")
@@ -254,21 +254,21 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                     }
                 }
             }
-            
+
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                 val callbacks = deviceCallbacks[deviceId]
                 val serviceDiscoveryCallback = callbacks?.serviceDiscoveryCallback
-                
+
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     serviceDiscoveryCallback?.invoke(true, "")
                 } else {
                     serviceDiscoveryCallback?.invoke(false, "Service discovery failed with status: $status")
                 }
-                
+
                 // Clear the service discovery callback as it's one-time use
                 callbacks?.serviceDiscoveryCallback = null
             }
-            
+
             override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
                 // Handle characteristic read result
                 val data = if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -283,13 +283,13 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 }
                 // This will be handled by pending operations
             }
-            
+
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
                 // Handle characteristic write result
                 val deviceId = gatt.device.address
                 val characteristicId = characteristic.uuid.toString()
                 val callbackKey = "$deviceId:$characteristicId"
-                
+
                 writeCallbacks.remove(callbackKey)?.let { callback ->
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         // Get response data from characteristic value (may be null/empty for acknowledgments)
@@ -304,10 +304,10 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                     }
                 }
             }
-            
+
             override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
                 val deviceId = gatt.device.address
-                
+
                 rssiCallbacks.remove(deviceId)?.let { callback ->
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         callback(true, rssi.toDouble(), "")
@@ -316,23 +316,23 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                     }
                 }
             }
-            
+
             override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
                 // Handle characteristic notifications
                 val characteristicId = characteristic.uuid.toString()
                 val value = characteristic.value ?: byteArrayOf()
-                
+
                 // Create direct ByteBuffer as required by ArrayBuffer.wrap()
                 val directBuffer = java.nio.ByteBuffer.allocateDirect(value.size)
                 directBuffer.put(value)
                 directBuffer.flip()
-                
+
                 val data = ArrayBuffer.wrap(directBuffer)
-                
+
                 val callbacks = deviceCallbacks[deviceId]
                 callbacks?.characteristicSubscriptions?.get(characteristicId)?.invoke(characteristicId, data)
             }
-            
+
             override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
                 // Handle descriptor write (for enabling/disabling notifications)
             }
@@ -349,32 +349,32 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         try {
             initializeBluetoothIfNeeded()
             val adapter = bluetoothAdapter ?: return
-            
+
             if (!adapter.isEnabled) {
                 return
             }
-            
+
             if (isCurrentlyScanning) {
                 return
             }
-            
+
             // Clear discovered devices for fresh scan session
             discoveredDevicesInCurrentScan.clear()
-            
+
             // Initialize scanner
             bleScanner = adapter.bluetoothLeScanner ?: return
             deviceFoundCallback = callback
-            
+
             // Create scan callback
             scanCallback = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
                     val device = createBLEDeviceFromScanResult(result)
-                    
+
                     // Apply RSSI threshold filtering
                     if (device.rssi < filter.rssiThreshold) {
                         return
                     }
-                    
+
                     // Apply application-level duplicate filtering if needed
                     if (!filter.allowDuplicates) {
                         if (discoveredDevicesInCurrentScan.contains(device.id)) {
@@ -382,19 +382,19 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                         }
                         discoveredDevicesInCurrentScan.add(device.id)
                     }
-                    
+
                     callback(device, null)
                 }
-                
+
                 override fun onBatchScanResults(results: MutableList<ScanResult>) {
                     results.forEach { result ->
                         val device = createBLEDeviceFromScanResult(result)
-                        
+
                         // Apply RSSI threshold filtering
                         if (device.rssi < filter.rssiThreshold) {
                             return@forEach
                         }
-                        
+
                         // Apply application-level duplicate filtering if needed
                         if (!filter.allowDuplicates) {
                             if (discoveredDevicesInCurrentScan.contains(device.id)) {
@@ -402,11 +402,11 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                             }
                             discoveredDevicesInCurrentScan.add(device.id)
                         }
-                        
+
                         callback(device, null)
                     }
                 }
-                
+
                 override fun onScanFailed(errorCode: Int) {
                     val errorMessage = when (errorCode) {
                         ScanCallback.SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
@@ -421,7 +421,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                     stopScan()
                 }
             }
-            
+
             // Create scan filters and settings
             val scanFilters = createAndroidScanFilters(filter)
             val scanMode = when (filter.androidScanMode) {
@@ -430,22 +430,22 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 AndroidScanMode.BALANCED -> ScanSettings.SCAN_MODE_BALANCED
                 AndroidScanMode.OPPORTUNISTIC -> ScanSettings.SCAN_MODE_OPPORTUNISTIC
             }
-            
+
             val scanSettingsBuilder = ScanSettings.Builder()
                 .setScanMode(scanMode)
                 .setReportDelay(0) // Report each advertisement individually
-            
+
             // Always use CALLBACK_TYPE_ALL_MATCHES for application-level duplicate filtering
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 scanSettingsBuilder.setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             }
-            
+
             val scanSettings = scanSettingsBuilder.build()
-            
+
             // Start scanning
             bleScanner?.startScan(scanFilters, scanSettings, scanCallback)
             isCurrentlyScanning = true
-            
+
         } catch (e: SecurityException) {
             isCurrentlyScanning = false
         } catch (e: Exception) {
@@ -483,7 +483,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         return try {
             val bluetoothManager = appContext?.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             val connectedDevices = bluetoothManager?.getConnectedDevices(BluetoothProfile.GATT) ?: emptyList()
-            
+
             connectedDevices.map { device ->
                 BLEDevice(
                     id = device.address,
@@ -494,6 +494,35 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                     isConnectable = true
                 )
             }.toTypedArray()
+        } catch (e: Exception) {
+            emptyArray()
+        }
+    }
+
+    // Bonded devices (Android)
+    override fun getBondedDevices(): Array<BLEDevice> {
+        return try {
+            initializeBluetoothIfNeeded()
+            val adapter = bluetoothAdapter ?: return emptyArray()
+
+            // Requires BLUETOOTH_CONNECT on Android 12+
+            if (!hasBluetoothPermissions()) {
+                return emptyArray()
+            }
+
+            val bonded: Set<BluetoothDevice> = adapter.bondedDevices ?: emptySet()
+            bonded.map { device ->
+                BLEDevice(
+                    id = device.address,
+                    name = device.name ?: "",
+                    rssi = 0.0,
+                    manufacturerData = ManufacturerData(companyIdentifiers = emptyArray()),
+                    serviceUUIDs = emptyArray(),
+                    isConnectable = true
+                )
+            }.toTypedArray()
+        } catch (e: SecurityException) {
+            emptyArray()
         } catch (e: Exception) {
             emptyArray()
         }
@@ -512,22 +541,22 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, deviceId, "Bluetooth not available")
                 return
             }
-            
+
             val device = adapter.getRemoteDevice(deviceId)
             if (device == null) {
                 callback(false, deviceId, "Device not found")
                 return
             }
-            
+
             // Store callbacks for this device
             deviceCallbacks[deviceId] = DeviceCallbacks(
                 connectCallback = callback,
                 disconnectCallback = disconnectCallback
             )
-            
+
             // Create GATT callback
             val gattCallback = createGattCallback(deviceId)
-            
+
             // Connect to device
             val context = appContext
             if (context != null) {
@@ -536,11 +565,102 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             } else {
                 callback(false, deviceId, "Context not available")
             }
-            
+
         } catch (e: SecurityException) {
             callback(false, deviceId, "Permission denied")
         } catch (e: Exception) {
             callback(false, deviceId, "Connection error: ${e.message}")
+        }
+    }
+
+    // Create a bond (pairing) with a device (Android)
+    override fun createBond(deviceId: String, callback: (success: Boolean, error: String) -> Unit) {
+        try {
+            initializeBluetoothIfNeeded()
+            val adapter = bluetoothAdapter
+            if (adapter == null) {
+                callback(false, "Bluetooth not available")
+                return
+            }
+
+            if (!hasBluetoothPermissions()) {
+                callback(false, "Missing Bluetooth permissions")
+                return
+            }
+
+            val device = adapter.getRemoteDevice(deviceId)
+            if (device == null) {
+                callback(false, "Device not found")
+                return
+            }
+
+            // If already bonded, succeed immediately
+            if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                callback(true, "")
+                return
+            }
+
+            val context = appContext
+            if (context == null) {
+                callback(false, "Context not available")
+                return
+            }
+
+            // Listen for bond state updates
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context?, intent: Intent?) {
+                    if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+                    val changedDevice: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    if (changedDevice?.address != deviceId) return
+
+                    val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+                    val prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
+
+                    when (bondState) {
+                        BluetoothDevice.BOND_BONDED -> {
+                            try {
+                                ctx?.unregisterReceiver(this)
+                            } catch (_: Exception) { }
+                            callback(true, "")
+                        }
+                        BluetoothDevice.BOND_NONE -> {
+                            // Pairing failed or was revoked
+                            try {
+                                ctx?.unregisterReceiver(this)
+                            } catch (_: Exception) { }
+                            // Try to pull reason if present (not always available)
+                            val reason = intent.getIntExtra("android.bluetooth.device.extra.REASON", -1)
+                            val msg = if (prevBondState == BluetoothDevice.BOND_BONDING) {
+                                "Bonding failed${if (reason != -1) " (reason=$reason)" else ""}"
+                            } else {
+                                "Not bonded"
+                            }
+                            callback(false, msg)
+                        }
+                        // For BOND_BONDING we do nothing and wait for final state
+                    }
+                }
+            }
+
+            val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                context.registerReceiver(receiver, filter)
+            }
+
+            // Initiate bonding
+            val initiated = device.createBond()
+            if (!initiated) {
+                try {
+                    context.unregisterReceiver(receiver)
+                } catch (_: Exception) { }
+                callback(false, "Failed to initiate bonding")
+            }
+        } catch (e: SecurityException) {
+            callback(false, "Permission denied")
+        } catch (e: Exception) {
+            callback(false, "Bonding error: ${e.message}")
         }
     }
 
@@ -583,17 +703,17 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, 0.0, "Device not connected")
                 return
             }
-            
+
             // Store callback for when RSSI is read
             rssiCallbacks[deviceId] = callback
-            
+
             // Initiate RSSI read
             val success = gatt.readRemoteRssi()
             if (!success) {
                 rssiCallbacks.remove(deviceId)
                 callback(false, 0.0, "Failed to initiate RSSI read")
             }
-            
+
         } catch (e: Exception) {
             rssiCallbacks.remove(deviceId)
             callback(false, 0.0, "RSSI read error: ${e.message}")
@@ -609,7 +729,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 if (callbacks != null) {
                     // Store the callback for when service discovery completes
                     callbacks.serviceDiscoveryCallback = callback
-                    
+
                     // Start service discovery
                     val success = gatt.discoverServices()
                     if (!success) {
@@ -665,19 +785,19 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, ArrayBuffer.allocate(0), "Device not connected")
                 return
             }
-            
+
             val service = gatt.getService(UUID.fromString(serviceId))
             if (service == null) {
                 callback(false, ArrayBuffer.allocate(0), "Service not found")
                 return
             }
-            
+
             val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
             if (characteristic == null) {
                 callback(false, ArrayBuffer.allocate(0), "Characteristic not found")
                 return
             }
-            
+
             val success = gatt.readCharacteristic(characteristic)
             if (!success) {
                 callback(false, ArrayBuffer.allocate(0), "Failed to start read operation")
@@ -692,7 +812,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 ArrayBuffer.wrap(directBuffer)
             } ?: ArrayBuffer.allocate(0)
             callback(success, data, if (success) "" else "Read operation failed")
-            
+
         } catch (e: Exception) {
             callback(false, ArrayBuffer.allocate(0), "Read error: ${e.message}")
         }
@@ -712,39 +832,39 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, ArrayBuffer.allocate(0), "Device not connected")
                 return
             }
-            
+
             val service = gatt.getService(UUID.fromString(serviceId))
             if (service == null) {
                 callback(false, ArrayBuffer.allocate(0), "Service not found")
                 return
             }
-            
+
             val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
             if (characteristic == null) {
                 callback(false, ArrayBuffer.allocate(0), "Characteristic not found")
                 return
             }
-            
+
             // Convert ArrayBuffer to byte array using proper Nitro API
             val byteBuffer = data.getBuffer(copyIfNeeded = true)
             val bytes = ByteArray(byteBuffer.remaining())
             byteBuffer.get(bytes)
-            
+
             characteristic.value = bytes
             characteristic.writeType = if (withResponse) {
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             } else {
                 BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             }
-            
+
             if (withResponse) {
                 // Store callback for when response comes back
                 val callbackKey = "$deviceId:$characteristicId"
                 writeCallbacks[callbackKey] = callback
             }
-            
+
             val success = gatt.writeCharacteristic(characteristic)
-            
+
             if (!withResponse) {
                 // For no response, call callback immediately
                 callback(success, ArrayBuffer.allocate(0), if (success) "" else "Write operation failed")
@@ -755,7 +875,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, ArrayBuffer.allocate(0), "Write operation failed to initiate")
             }
             // If withResponse and success, wait for onCharacteristicWrite
-            
+
         } catch (e: Exception) {
             callback(false, ArrayBuffer.allocate(0), "Write error: ${e.message}")
         }
@@ -774,41 +894,41 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 resultCallback(false, "Device not connected")
                 return
             }
-            
+
             val service = gatt.getService(UUID.fromString(serviceId))
             if (service == null) {
                 resultCallback(false, "Service not found")
                 return
             }
-            
+
             val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
             if (characteristic == null) {
                 resultCallback(false, "Characteristic not found")
                 return
             }
-            
+
             // Enable notifications
             val success = gatt.setCharacteristicNotification(characteristic, true)
             if (!success) {
                 resultCallback(false, "Failed to enable notifications")
                 return
             }
-            
+
             // Store the callback
             val callbacks = deviceCallbacks[deviceId]
             if (callbacks != null) {
                 callbacks.characteristicSubscriptions[characteristicId] = updateCallback
             }
-            
+
             // Write to the descriptor to enable notifications on the device
             val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
             if (descriptor != null) {
                 descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 gatt.writeDescriptor(descriptor)
             }
-            
+
             resultCallback(true, "")
-            
+
         } catch (e: Exception) {
             resultCallback(false, "Subscription error: ${e.message}")
         }
@@ -826,39 +946,39 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, "Device not connected")
                 return
             }
-            
+
             val service = gatt.getService(UUID.fromString(serviceId))
             if (service == null) {
                 callback(false, "Service not found")
                 return
             }
-            
+
             val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
             if (characteristic == null) {
                 callback(false, "Characteristic not found")
                 return
             }
-            
+
             // Disable notifications
             val success = gatt.setCharacteristicNotification(characteristic, false)
             if (!success) {
                 callback(false, "Failed to disable notifications")
                 return
             }
-            
+
             // Remove the callback
             val callbacks = deviceCallbacks[deviceId]
             callbacks?.characteristicSubscriptions?.remove(characteristicId)
-            
+
             // Write to the descriptor to disable notifications on the device
             val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
             if (descriptor != null) {
                 descriptor.value = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
                 gatt.writeDescriptor(descriptor)
             }
-            
+
             callback(true, "")
-            
+
         } catch (e: Exception) {
             callback(false, "Unsubscription error: ${e.message}")
         }
@@ -873,12 +993,12 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 callback(false, "Bluetooth not supported on this device")
                 return
             }
-            
+
             if (adapter.isEnabled) {
                 callback(true, "")
                 return
             }
-            
+
             // Request user to enable Bluetooth
             try {
                 val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
@@ -890,7 +1010,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             } catch (securityException: SecurityException) {
                 callback(false, "Permission denied: Cannot request Bluetooth enable. Please check app permissions.")
             }
-            
+
         } catch (e: Exception) {
             callback(false, "Error requesting Bluetooth enable: ${e.message}")
         }
@@ -901,10 +1021,10 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         if (!hasBluetoothPermissions()) {
             return BLEState.UNAUTHORIZED
         }
-        
+
         initializeBluetoothIfNeeded()
         val adapter = bluetoothAdapter ?: return BLEState.UNSUPPORTED
-        
+
         return try {
             bluetoothStateToBlEState(adapter.state)
         } catch (securityException: SecurityException) {
@@ -915,23 +1035,23 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     override fun subscribeToStateChange(stateCallback: (state: BLEState) -> Unit): OperationResult {
         try {
             val context = appContext ?: return OperationResult(success = false, error = "Context not available")
-            
+
             // Unsubscribe from any existing subscription
             unsubscribeFromStateChange()
-            
+
             // Store the callback
             this.stateCallback = stateCallback
-            
+
             // Create and register broadcast receiver
             bluetoothStateReceiver = createBluetoothStateReceiver()
             val intentFilter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
-            
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 context.registerReceiver(bluetoothStateReceiver, intentFilter, Context.RECEIVER_NOT_EXPORTED)
             } else {
                 context.registerReceiver(bluetoothStateReceiver, intentFilter)
             }
-            
+
             return OperationResult(success = true, error = null)
         } catch (e: Exception) {
             return OperationResult(success = false, error = "Error subscribing to state changes: ${e.message}")
@@ -942,7 +1062,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         try {
             // Clear the callback
             this.stateCallback = null
-            
+
             // Unregister broadcast receiver if it exists
             bluetoothStateReceiver?.let { receiver ->
                 val context = appContext
@@ -955,7 +1075,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 }
                 bluetoothStateReceiver = null
             }
-            
+
             return OperationResult(success = true, error = null)
         } catch (e: Exception) {
             return OperationResult(success = false, error = "Error unsubscribing from state changes: ${e.message}")
