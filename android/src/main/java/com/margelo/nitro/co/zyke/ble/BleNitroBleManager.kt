@@ -39,6 +39,15 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     private var bluetoothStateReceiver: BroadcastReceiver? = null
     private var restoreStateCallback: ((devices: List<BLEDevice>) -> Unit)? = null
 
+    // Bonding state
+    private var bondReceiver: BroadcastReceiver? = null
+    private data class PendingBond(
+        val deviceId: String,
+        val pin: String? = null,
+        val callback: (success: Boolean, error: String) -> Unit
+    )
+    private var pendingBond: PendingBond? = null
+
     // BLE Scanning
     private var bleScanner: BluetoothLeScanner? = null
     private var isCurrentlyScanning = false
@@ -93,6 +102,96 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             } catch (e: Exception) {
                 // Context will be set by package initialization if reflection fails
             }
+        }
+    }
+
+    private fun ensureBondReceiverRegistered() {
+        val context = appContext ?: return
+        if (bondReceiver != null) return
+
+        bondReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                        val target = pendingBond ?: return
+                        val changedDevice: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                        }
+                        if (changedDevice?.address != target.deviceId) return
+
+                        val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+                        val prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
+
+                        when (bondState) {
+                            BluetoothDevice.BOND_BONDED -> {
+                                pendingBond?.callback?.invoke(true, "")
+                                pendingBond = null
+                            }
+                            BluetoothDevice.BOND_NONE -> {
+                                val reason = intent.getIntExtra("android.bluetooth.device.extra.REASON", -1)
+                                val msg = if (prevBondState == BluetoothDevice.BOND_BONDING) {
+                                    "Bonding failed${if (reason != -1) " (reason=$reason)" else ""}"
+                                } else {
+                                    "Not bonded"
+                                }
+                                pendingBond?.callback?.invoke(false, msg)
+                                pendingBond = null
+                            }
+                            // BOND_BONDING -> wait
+                        }
+                    }
+                    BluetoothDevice.ACTION_PAIRING_REQUEST -> {
+                        // Optional PIN handling if we ever add it to API
+                        val target = pendingBond ?: return
+                        val dev: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                        }
+                        if (dev?.address != target.deviceId) return
+                        val pin = target.pin
+                        if (pin != null) {
+                            try {
+                                @Suppress("MissingPermission")
+                                dev.setPin(pin.toByteArray(Charsets.UTF_8))
+                                @Suppress("MissingPermission")
+                                dev.createBond()
+                            } catch (_: Exception) { /* ignore */ }
+                        }
+                    }
+                }
+            }
+        }
+
+        val stateFilter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        val pairingFilter = IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST).apply {
+            // Keep high priority similar to RN BleManager to avoid being pre-empted
+            priority = IntentFilter.SYSTEM_HIGH_PRIORITY
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            context.registerReceiver(bondReceiver, stateFilter, Context.RECEIVER_EXPORTED)
+            context.registerReceiver(bondReceiver, pairingFilter, Context.RECEIVER_EXPORTED)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(bondReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(bondReceiver, pairingFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(bondReceiver, stateFilter)
+            context.registerReceiver(bondReceiver, pairingFilter)
+        }
+    }
+
+    private fun unregisterBondReceiverIfIdle() {
+        val context = appContext ?: return
+        if (pendingBond == null && bondReceiver != null) {
+            try {
+                context.unregisterReceiver(bondReceiver)
+            } catch (_: Exception) { }
+            bondReceiver = null
         }
     }
 
@@ -560,7 +659,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             // Connect to device
             val context = appContext
             if (context != null) {
-                val gatt = device.connectGatt(context, false, gattCallback)
+                val gatt = device.connectGatt(context, true, gattCallback)
                 connectedDevices[deviceId] = gatt
             } else {
                 callback(false, deviceId, "Context not available")
@@ -600,61 +699,23 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 return
             }
 
-            val context = appContext
-            if (context == null) {
-                callback(false, "Context not available")
+            ensureBondReceiverRegistered()
+
+            // Only one pending bond is allowed at a time (mirror RN BleManager behavior)
+            if (pendingBond != null) {
+                callback(false, "Only allow one bond request at a time")
                 return
             }
+            pendingBond = PendingBond(deviceId = deviceId, pin = null, callback = { success, error ->
+                callback(success, error)
+                unregisterBondReceiverIfIdle()
+            })
 
-            // Listen for bond state updates
-            val receiver = object : BroadcastReceiver() {
-                override fun onReceive(ctx: Context?, intent: Intent?) {
-                    if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
-                    val changedDevice: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                    if (changedDevice?.address != deviceId) return
-
-                    val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
-                    val prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
-
-                    when (bondState) {
-                        BluetoothDevice.BOND_BONDED -> {
-                            try {
-                                ctx?.unregisterReceiver(this)
-                            } catch (_: Exception) { }
-                            callback(true, "")
-                        }
-                        BluetoothDevice.BOND_NONE -> {
-                            // Pairing failed or was revoked
-                            try {
-                                ctx?.unregisterReceiver(this)
-                            } catch (_: Exception) { }
-                            // Try to pull reason if present (not always available)
-                            val reason = intent.getIntExtra("android.bluetooth.device.extra.REASON", -1)
-                            val msg = if (prevBondState == BluetoothDevice.BOND_BONDING) {
-                                "Bonding failed${if (reason != -1) " (reason=$reason)" else ""}"
-                            } else {
-                                "Not bonded"
-                            }
-                            callback(false, msg)
-                        }
-                        // For BOND_BONDING we do nothing and wait for final state
-                    }
-                }
-            }
-
-            val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                context.registerReceiver(receiver, filter)
-            }
-
-            // Initiate bonding
+            // Initiate bonding AFTER receiver & state set to avoid missing the first broadcast
             val initiated = device.createBond()
             if (!initiated) {
-                try {
-                    context.unregisterReceiver(receiver)
-                } catch (_: Exception) { }
+                pendingBond = null
+                unregisterBondReceiverIfIdle()
                 callback(false, "Failed to initiate bonding")
             }
         } catch (e: SecurityException) {
