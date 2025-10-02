@@ -2,6 +2,7 @@ package com.margelo.nitro.co.zyke.ble
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import no.nordicsemi.android.ble.PhyRequest
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -54,6 +55,10 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     private var scanCallback: ScanCallback? = null
     private var deviceFoundCallback: ((device: BLEDevice?, error: String?) -> Unit)? = null
     private val discoveredDevicesInCurrentScan = mutableSetOf<String>()
+
+
+    //nordic bluetoothManager
+    private val nordicManagers = ConcurrentHashMap<String, MyNordicManager>()
 
     // Device connections
     private val connectedDevices = ConcurrentHashMap<String, BluetoothGatt>()
@@ -449,121 +454,122 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             initializeBluetoothIfNeeded()
             val adapter = bluetoothAdapter ?: return
 
+            // Permission & state checks
+            if (!hasBluetoothPermissions()) {
+                callback(null, "Missing Bluetooth permissions")
+                return
+            }
             if (!adapter.isEnabled) {
+                callback(null, "Bluetooth is powered off")
                 return
             }
 
             if (isCurrentlyScanning) {
+                // Already scanning — treat as success (idempotent)
                 return
             }
 
-            // Clear discovered devices for fresh scan session
+            // Reset per-session state
             discoveredDevicesInCurrentScan.clear()
 
-            // Initialize scanner
-            bleScanner = adapter.bluetoothLeScanner ?: return
+            bleScanner = adapter.bluetoothLeScanner ?: run {
+                callback(null, "Scanner not available")
+                return
+            }
             deviceFoundCallback = callback
 
-            // Create scan callback
+            // Build filters
+            val scanFilters = createAndroidScanFilters(filter)
+
+            // Build settings derived from requested mode
+            val scanMode = when (filter.androidScanMode) {
+                AndroidScanMode.LOWLATENCY -> ScanSettings.SCAN_MODE_LOW_LATENCY
+                AndroidScanMode.LOWPOWER   -> ScanSettings.SCAN_MODE_LOW_POWER
+                AndroidScanMode.BALANCED   -> ScanSettings.SCAN_MODE_BALANCED
+                AndroidScanMode.OPPORTUNISTIC -> ScanSettings.SCAN_MODE_OPPORTUNISTIC
+            }
+
+            val settingsBuilder = ScanSettings.Builder()
+                .setScanMode(scanMode)
+                .setReportDelay(0)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                settingsBuilder.setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Better responsiveness for LowLatency, less battery for LowPower
+                val matchMode = when (scanMode) {
+                    ScanSettings.SCAN_MODE_LOW_LATENCY -> ScanSettings.MATCH_MODE_AGGRESSIVE
+                    else -> ScanSettings.MATCH_MODE_STICKY
+                }
+                settingsBuilder.setMatchMode(matchMode)
+                // Let the framework deliver more matches when aggressive
+                val numMatches = when (scanMode) {
+                    ScanSettings.SCAN_MODE_LOW_LATENCY -> ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT
+                    else -> ScanSettings.MATCH_NUM_FEW_ADVERTISEMENT
+                }
+                settingsBuilder.setNumOfMatches(numMatches)
+            }
+
+            val settings = settingsBuilder.build()
+
+            // Prepare callback
             scanCallback = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
                     val device = createBLEDeviceFromScanResult(result)
-
-                    // Apply RSSI threshold filtering
-                    if (device.rssi < filter.rssiThreshold) {
-                        return
-                    }
-
-                    // Apply application-level duplicate filtering if needed
-                    if (!filter.allowDuplicates) {
-                        if (discoveredDevicesInCurrentScan.contains(device.id)) {
-                            return // Skip duplicate
-                        }
-                        discoveredDevicesInCurrentScan.add(device.id)
-                    }
-
+                    // RSSI threshold
+                    if (device.rssi < filter.rssiThreshold) return
+                    // De-dup if requested
+                    if (!filter.allowDuplicates && !discoveredDevicesInCurrentScan.add(device.id)) return
                     callback(device, null)
                 }
-
                 override fun onBatchScanResults(results: MutableList<ScanResult>) {
-                    results.forEach { result ->
-                        val device = createBLEDeviceFromScanResult(result)
-
-                        // Apply RSSI threshold filtering
-                        if (device.rssi < filter.rssiThreshold) {
-                            return@forEach
-                        }
-
-                        // Apply application-level duplicate filtering if needed
-                        if (!filter.allowDuplicates) {
-                            if (discoveredDevicesInCurrentScan.contains(device.id)) {
-                                return@forEach // Skip duplicate
-                            }
-                            discoveredDevicesInCurrentScan.add(device.id)
-                        }
-
+                    results.forEach { r ->
+                        val device = createBLEDeviceFromScanResult(r)
+                        if (device.rssi < filter.rssiThreshold) return@forEach
+                        if (!filter.allowDuplicates && !discoveredDevicesInCurrentScan.add(device.id)) return@forEach
                         callback(device, null)
                     }
                 }
-
                 override fun onScanFailed(errorCode: Int) {
-                    val errorMessage = when (errorCode) {
-                        ScanCallback.SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
-                        ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
-                        ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
-                        ScanCallback.SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
-                        ScanCallback.SCAN_FAILED_OUT_OF_HARDWARE_RESOURCES -> "Out of hardware resources"
-                        ScanCallback.SCAN_FAILED_SCANNING_TOO_FREQUENTLY -> "Scanning too frequently"
+                    val msg = when (errorCode) {
+                        SCAN_FAILED_ALREADY_STARTED -> "Scan already started"
+                        SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App registration failed"
+                        SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature unsupported"
+                        SCAN_FAILED_INTERNAL_ERROR -> "Internal error"
+                        SCAN_FAILED_OUT_OF_HARDWARE_RESOURCES -> "Out of hardware resources"
+                        SCAN_FAILED_SCANNING_TOO_FREQUENTLY -> "Scanning too frequently"
                         else -> "Scan failed with error code: $errorCode"
                     }
-                    callback(null, errorMessage)
+                    callback(null, msg)
                     stopScan()
                 }
             }
 
-            // Create scan filters and settings
-            val scanFilters = createAndroidScanFilters(filter)
-            val scanMode = when (filter.androidScanMode) {
-                AndroidScanMode.LOWLATENCY -> ScanSettings.SCAN_MODE_LOW_LATENCY
-                AndroidScanMode.LOWPOWER -> ScanSettings.SCAN_MODE_LOW_POWER
-                AndroidScanMode.BALANCED -> ScanSettings.SCAN_MODE_BALANCED
-                AndroidScanMode.OPPORTUNISTIC -> ScanSettings.SCAN_MODE_OPPORTUNISTIC
-            }
-
-            val scanSettingsBuilder = ScanSettings.Builder()
-                .setScanMode(scanMode)
-                .setReportDelay(0) // Report each advertisement individually
-
-            // Always use CALLBACK_TYPE_ALL_MATCHES for application-level duplicate filtering
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                scanSettingsBuilder.setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-            }
-
-            val scanSettings = scanSettingsBuilder.build()
-
             // Start scanning
-            bleScanner?.startScan(scanFilters, scanSettings, scanCallback)
+            bleScanner?.startScan(scanFilters, settings, scanCallback)
             isCurrentlyScanning = true
-
         } catch (e: SecurityException) {
             isCurrentlyScanning = false
+            callback(null, "Permission error: ${e.message}")
         } catch (e: Exception) {
             isCurrentlyScanning = false
+            callback(null, "Scan error: ${e.message}")
         }
     }
 
     override fun stopScan(): Boolean {
         return try {
             if (scanCallback != null && isCurrentlyScanning) {
-                bleScanner?.stopScan(scanCallback)
+                try { bleScanner?.stopScan(scanCallback) } catch (_: Exception) {}
             }
             isCurrentlyScanning = false
             scanCallback = null
             deviceFoundCallback = null
             bleScanner = null
-            discoveredDevicesInCurrentScan.clear() // Clear discovered devices for next scan session
+            discoveredDevicesInCurrentScan.clear()
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             isCurrentlyScanning = false
             scanCallback = null
             deviceFoundCallback = null
@@ -580,20 +586,35 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     // Device discovery
     override fun getConnectedDevices(services: Array<String>): Array<BLEDevice> {
         return try {
-            val bluetoothManager = appContext?.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val connectedDevices = bluetoothManager?.getConnectedDevices(BluetoothProfile.GATT) ?: emptyList()
+            initializeBluetoothIfNeeded()
+            val adapter = bluetoothAdapter ?: return emptyArray()
 
-            connectedDevices.map { device ->
-                BLEDevice(
-                    id = device.address,
-                    name = device.name ?: "",
-                    rssi = 0.0, // RSSI not available for already connected devices
-                    manufacturerData = ManufacturerData(companyIdentifiers = emptyArray()),
-                    serviceUUIDs = emptyArray(), // Service UUIDs not available without service discovery
-                    isConnectable = true
-                )
-            }.toTypedArray()
-        } catch (e: Exception) {
+            val needFilter = services.isNotEmpty()
+            val normalizedFilter = if (needFilter) services.map { it.lowercase() } else emptyList()
+
+            val result = mutableListOf<BLEDevice>()
+            for ((deviceId, mgr) in nordicManagers) {
+                if (mgr.isConnected) {
+                    // Optional filtering by services
+                    if (needFilter) {
+                        val devServices = getServices(deviceId).map { it.lowercase() }.toSet()
+                        val matches = normalizedFilter.all { it in devServices }
+                        if (!matches) continue
+                    }
+
+                    val dev = try { adapter.getRemoteDevice(deviceId) } catch (_: Exception) { null }
+                    result += BLEDevice(
+                        id = deviceId,
+                        name = dev?.name ?: "",
+                        rssi = 0.0, // RSSI не читаем тут
+                        manufacturerData = ManufacturerData(companyIdentifiers = emptyArray()),
+                        serviceUUIDs = getServices(deviceId),
+                        isConnectable = true
+                    )
+                }
+            }
+            result.toTypedArray()
+        } catch (_: Exception) {
             emptyArray()
         }
     }
@@ -628,155 +649,68 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     }
 
     // Connection management
-    override fun connect(
-        deviceId: String,
-        callback: (success: Boolean, deviceId: String, error: String) -> Unit,
-        disconnectCallback: ((deviceId: String, interrupted: Boolean, error: String) -> Unit)?
-    ) {
+    //TODO: add disconnect callback
+    override fun connect(deviceId: String, callback: (Boolean, String, String)->Unit, disconnectCallback: ((String, Boolean, String)->Unit)?) {
         try {
             initializeBluetoothIfNeeded()
-            val adapter = bluetoothAdapter
-            if (adapter == null) {
-                callback(false, deviceId, "Bluetooth not available")
-                return
-            }
+            val ctx = appContext ?: return callback(false, deviceId, "Context not available")
+            val dev = bluetoothAdapter?.getRemoteDevice(deviceId) ?: return callback(false, deviceId, "Device not found")
 
-            val device = adapter.getRemoteDevice(deviceId)
-            if (device == null) {
-                callback(false, deviceId, "Device not found")
-                return
-            }
+            val mgr = MyNordicManager(ctx)
+            nordicManagers[deviceId] = mgr
 
-            // Store callbacks for this device
-            deviceCallbacks[deviceId] = DeviceCallbacks(
-                connectCallback = callback,
-                disconnectCallback = disconnectCallback
-            )
-
-            // Create GATT callback
-            val gattCallback = createGattCallback(deviceId)
-
-            // Connect to device
-            val context = appContext
-            if (context != null) {
-                val gatt = device.connectGatt(context, true, gattCallback)
-                connectedDevices[deviceId] = gatt
-            } else {
-                callback(false, deviceId, "Context not available")
-            }
-
-        } catch (e: SecurityException) {
-            callback(false, deviceId, "Permission denied")
-        } catch (e: Exception) {
+            mgr.connectRequest(dev)
+                .useAutoConnect(false)
+                .retry(3, 200)
+                .usePreferredPhy(PhyRequest.PHY_LE_2M_MASK or PhyRequest.PHY_LE_CODED_MASK)
+                .done { callback(true, deviceId, "") }
+                .fail { _, status -> callback(false, deviceId, "Connection failed: $status") }
+                .enqueue()
+            } catch (e: Exception) {
             callback(false, deviceId, "Connection error: ${e.message}")
         }
     }
 
     // Create a bond (pairing) with a device (Android)
-    override fun createBond(deviceId: String, callback: (success: Boolean, error: String) -> Unit) {
-        try {
-            initializeBluetoothIfNeeded()
-            val adapter = bluetoothAdapter
-            if (adapter == null) {
-                callback(false, "Bluetooth not available")
-                return
-            }
-
-            if (!hasBluetoothPermissions()) {
-                callback(false, "Missing Bluetooth permissions")
-                return
-            }
-
-            val device = adapter.getRemoteDevice(deviceId)
-            if (device == null) {
-                callback(false, "Device not found")
-                return
-            }
-
-            // If already bonded, succeed immediately
-            if (device.bondState == BluetoothDevice.BOND_BONDED) {
-                callback(true, "")
-                return
-            }
-
-            ensureBondReceiverRegistered()
-
-            // Only one pending bond is allowed at a time (mirror RN BleManager behavior)
-            if (pendingBond != null) {
-                callback(false, "Only allow one bond request at a time")
-                return
-            }
-            pendingBond = PendingBond(deviceId = deviceId, pin = null, callback = { success, error ->
-                callback(success, error)
-                unregisterBondReceiverIfIdle()
-            })
-
-            // Initiate bonding AFTER receiver & state set to avoid missing the first broadcast
-            val initiated = device.createBond()
-            if (!initiated) {
-                pendingBond = null
-                unregisterBondReceiverIfIdle()
-                callback(false, "Failed to initiate bonding")
-            }
-        } catch (e: SecurityException) {
-            callback(false, "Permission denied")
-        } catch (e: Exception) {
-            callback(false, "Bonding error: ${e.message}")
+    override fun createBond(deviceId: String, cb: (Boolean, String)->Unit) {
+        val mgr = nordicManagers[deviceId] ?: return cb(false, "Device not connected")
+        mgr.setBondingRequiredPublic(true)
+        mgr.ensureBondPublic()
+            .done { cb(true, "") }
+            .fail { _, status -> cb(false, "Bonding failed: $status") }
+            .enqueue()
         }
-    }
 
-    override fun disconnect(deviceId: String, callback: (success: Boolean, error: String) -> Unit) {
-        try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt != null) {
-                gatt.disconnect()
-                callback(true, "")
-            } else {
-                callback(false, "Device not connected")
-            }
-        } catch (e: Exception) {
-            callback(false, "Disconnect error: ${e.message}")
-        }
+    override fun disconnect(deviceId: String, cb: (Boolean, String)->Unit) {
+        nordicManagers.remove(deviceId)?.let {
+            it.disconnect().done { cb(true, "") }.fail { _, _ -> cb(false, "Disconnect failed") }.enqueue()
+        } ?: cb(false, "Device not connected")
     }
 
     override fun isConnected(deviceId: String): Boolean {
-        return connectedDevices.containsKey(deviceId)
+        return try {
+            nordicManagers[deviceId]?.isConnected ?: false
+        } catch (_: Exception) {
+            false
+        }
     }
 
     override fun requestMTU(deviceId: String, mtu: Double): Double {
-        return try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt != null) {
-                val success = gatt.requestMtu(mtu.toInt())
-                if (success) mtu else 0.0
-            } else {
-                0.0
-            }
-        } catch (e: Exception) {
-            0.0
-        }
+        val mgr = nordicManagers[deviceId] ?: return 0.0
+        mgr.requestMtuPublic(mtu.toInt()).enqueue()
+        return mtu // фактическое подтверждение прилетит позже; по твоему API ок вернуть запрошенное
     }
 
     override fun readRSSI(deviceId: String, callback: (success: Boolean, rssi: Double, error: String) -> Unit) {
         try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt == null) {
-                callback(false, 0.0, "Device not connected")
-                return
-            }
+            val mgr = nordicManagers[deviceId]
+                ?: return callback(false, 0.0, "Device not connected")
 
-            // Store callback for when RSSI is read
-            rssiCallbacks[deviceId] = callback
-
-            // Initiate RSSI read
-            val success = gatt.readRemoteRssi()
-            if (!success) {
-                rssiCallbacks.remove(deviceId)
-                callback(false, 0.0, "Failed to initiate RSSI read")
-            }
-
+            mgr.readRssiPublic()
+                .with { _, rssi -> callback(true, rssi.toDouble(), "") }
+                .fail { _, status -> callback(false, 0.0, "RSSI read failed: $status") }
+                .enqueue()
         } catch (e: Exception) {
-            rssiCallbacks.remove(deviceId)
             callback(false, 0.0, "RSSI read error: ${e.message}")
         }
     }
@@ -784,27 +718,16 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     // Service discovery
     override fun discoverServices(deviceId: String, callback: (success: Boolean, error: String) -> Unit) {
         try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt != null) {
-                val callbacks = deviceCallbacks[deviceId]
-                if (callbacks != null) {
-                    // Store the callback for when service discovery completes
-                    callbacks.serviceDiscoveryCallback = callback
+            val mgr = nordicManagers[deviceId]
+                ?: return callback(false, "Device not connected")
 
-                    // Start service discovery
-                    val success = gatt.discoverServices()
-                    if (!success) {
-                        // Clear callback and report failure immediately
-                        callbacks.serviceDiscoveryCallback = null
-                        callback(false, "Failed to start service discovery")
-                    }
-                    // If success, the callback will be invoked in onServicesDiscovered
-                } else {
-                    callback(false, "Device callback not found")
-                }
-            } else {
-                callback(false, "Device not connected")
-            }
+            // В Nordic BleManager discovery делается автоматически при connect().
+            // Здесь просто выполняем лёгкий запрос (RSSI), чтобы убедиться, что соединение активно,
+            // и считаем discovery завершённым для нашего API.
+            mgr.readRssiPublic()
+                .done { callback(true, "") }
+                .fail { _, _ -> callback(true, "") } // даже при ошибке чита RSSI, discovery уже был выполнен ранее
+                .enqueue()
         } catch (e: Exception) {
             callback(false, "Service discovery error: ${e.message}")
         }
@@ -812,11 +735,25 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
 
     override fun getServices(deviceId: String): Array<String> {
         return try {
-            val gatt = connectedDevices[deviceId]
-            gatt?.services?.map { service ->
-                service.uuid.toString()
-            }?.toTypedArray() ?: emptyArray()
-        } catch (e: Exception) {
+            val mgr = nordicManagers[deviceId] ?: return emptyArray()
+
+            // Достаём bluetoothGatt из BleManager через reflection (поле защищённое в суперклассе)
+            var clazz: Class<*>? = mgr.javaClass
+            var gattField: java.lang.reflect.Field? = null
+            while (clazz != null && gattField == null) {
+                try {
+                    gattField = clazz.getDeclaredField("bluetoothGatt")
+                } catch (_: NoSuchFieldException) {
+                    clazz = clazz.superclass
+                }
+            }
+            val gatt = gattField?.let { field ->
+                field.isAccessible = true
+                field.get(mgr) as? BluetoothGatt
+            }
+
+            gatt?.services?.map { it.uuid.toString() }?.toTypedArray() ?: emptyArray()
+        } catch (_: Exception) {
             emptyArray()
         }
     }
@@ -841,39 +778,25 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         callback: (success: Boolean, data: ArrayBuffer, error: String) -> Unit
     ) {
         try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt == null) {
-                callback(false, ArrayBuffer.allocate(0), "Device not connected")
-                return
-            }
+            val mgr = nordicManagers[deviceId]
+                ?: return callback(false, ArrayBuffer.allocate(0), "Device not connected")
 
-            val service = gatt.getService(UUID.fromString(serviceId))
-            if (service == null) {
-                callback(false, ArrayBuffer.allocate(0), "Service not found")
-                return
-            }
+            val svc = UUID.fromString(serviceId)
+            val chr = UUID.fromString(characteristicId)
 
-            val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
-            if (characteristic == null) {
-                callback(false, ArrayBuffer.allocate(0), "Characteristic not found")
-                return
-            }
-
-            val success = gatt.readCharacteristic(characteristic)
-            if (!success) {
-                callback(false, ArrayBuffer.allocate(0), "Failed to start read operation")
-            }
-            // The actual result will come in onCharacteristicRead callback
-            // For now, we'll return the cached value
-            val data = characteristic.value?.let { value ->
-                // Create direct ByteBuffer as required by ArrayBuffer.wrap()
-                val directBuffer = java.nio.ByteBuffer.allocateDirect(value.size)
-                directBuffer.put(value)
-                directBuffer.flip()
-                ArrayBuffer.wrap(directBuffer)
-            } ?: ArrayBuffer.allocate(0)
-            callback(success, data, if (success) "" else "Read operation failed")
-
+            mgr.read(
+                svc,
+                chr,
+                onData = { bytes ->
+                    val direct = java.nio.ByteBuffer.allocateDirect(bytes.size)
+                    direct.put(bytes)
+                    direct.flip()
+                    callback(true, ArrayBuffer.wrap(direct), "")
+                },
+                onErr = { err ->
+                    callback(false, ArrayBuffer.allocate(0), err)
+                }
+            )
         } catch (e: Exception) {
             callback(false, ArrayBuffer.allocate(0), "Read error: ${e.message}")
         }
@@ -888,55 +811,32 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         callback: (success: Boolean, responseData: ArrayBuffer, error: String) -> Unit
     ) {
         try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt == null) {
-                callback(false, ArrayBuffer.allocate(0), "Device not connected")
-                return
-            }
+            val mgr = nordicManagers[deviceId]
+                ?: return callback(false, ArrayBuffer.allocate(0), "Device not connected")
 
-            val service = gatt.getService(UUID.fromString(serviceId))
-            if (service == null) {
-                callback(false, ArrayBuffer.allocate(0), "Service not found")
-                return
-            }
+            // Convert ArrayBuffer -> ByteArray
+            val buf = data.getBuffer(copyIfNeeded = true)
+            val bytes = ByteArray(buf.remaining())
+            buf.get(bytes)
 
-            val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
-            if (characteristic == null) {
-                callback(false, ArrayBuffer.allocate(0), "Characteristic not found")
-                return
-            }
+            val svc = UUID.fromString(serviceId)
+            val chr = UUID.fromString(characteristicId)
 
-            // Convert ArrayBuffer to byte array using proper Nitro API
-            val byteBuffer = data.getBuffer(copyIfNeeded = true)
-            val bytes = ByteArray(byteBuffer.remaining())
-            byteBuffer.get(bytes)
-
-            characteristic.value = bytes
-            characteristic.writeType = if (withResponse) {
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            } else {
-                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            }
-
-            if (withResponse) {
-                // Store callback for when response comes back
-                val callbackKey = "$deviceId:$characteristicId"
-                writeCallbacks[callbackKey] = callback
-            }
-
-            val success = gatt.writeCharacteristic(characteristic)
-
-            if (!withResponse) {
-                // For no response, call callback immediately
-                callback(success, ArrayBuffer.allocate(0), if (success) "" else "Write operation failed")
-            } else if (!success) {
-                // If write initiation failed, remove callback and notify
-                val callbackKey = "$deviceId:$characteristicId"
-                writeCallbacks.remove(callbackKey)
-                callback(false, ArrayBuffer.allocate(0), "Write operation failed to initiate")
-            }
-            // If withResponse and success, wait for onCharacteristicWrite
-
+            mgr.write(
+                svc,
+                chr,
+                bytes,
+                withResponse,
+                onDone = { _, resp ->
+                    val direct = java.nio.ByteBuffer.allocateDirect(resp.size)
+                    direct.put(resp)
+                    direct.flip()
+                    callback(true, ArrayBuffer.wrap(direct), "")
+                },
+                onErr = { err ->
+                    callback(false, ArrayBuffer.allocate(0), err)
+                }
+            )
         } catch (e: Exception) {
             callback(false, ArrayBuffer.allocate(0), "Write error: ${e.message}")
         }
@@ -950,46 +850,37 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         resultCallback: (success: Boolean, error: String) -> Unit
     ) {
         try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt == null) {
-                resultCallback(false, "Device not connected")
-                return
+            val mgr = nordicManagers[deviceId]
+                ?: return resultCallback(false, "Device not connected")
+
+            val svc = UUID.fromString(serviceId)
+            val chr = UUID.fromString(characteristicId)
+
+            // Store/update JS callback
+            deviceCallbacks[deviceId]?.let { cb ->
+                cb.characteristicSubscriptions[characteristicId] = updateCallback
+            } ?: run {
+                deviceCallbacks[deviceId] = DeviceCallbacks(
+                    characteristicSubscriptions = mutableMapOf(characteristicId to updateCallback)
+                )
             }
 
-            val service = gatt.getService(UUID.fromString(serviceId))
-            if (service == null) {
-                resultCallback(false, "Service not found")
-                return
-            }
-
-            val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
-            if (characteristic == null) {
-                resultCallback(false, "Characteristic not found")
-                return
-            }
-
-            // Enable notifications
-            val success = gatt.setCharacteristicNotification(characteristic, true)
-            if (!success) {
-                resultCallback(false, "Failed to enable notifications")
-                return
-            }
-
-            // Store the callback
-            val callbacks = deviceCallbacks[deviceId]
-            if (callbacks != null) {
-                callbacks.characteristicSubscriptions[characteristicId] = updateCallback
-            }
-
-            // Write to the descriptor to enable notifications on the device
-            val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            if (descriptor != null) {
-                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(descriptor)
-            }
+            mgr.enableNotify(
+                svc,
+                chr,
+                onData = { bytes ->
+                    val direct = java.nio.ByteBuffer.allocateDirect(bytes.size)
+                    direct.put(bytes)
+                    direct.flip()
+                    val data = ArrayBuffer.wrap(direct)
+                    deviceCallbacks[deviceId]?.characteristicSubscriptions?.get(characteristicId)?.invoke(characteristicId, data)
+                },
+                onErr = { err ->
+                    resultCallback(false, err)
+                }
+            )
 
             resultCallback(true, "")
-
         } catch (e: Exception) {
             resultCallback(false, "Subscription error: ${e.message}")
         }
@@ -1002,44 +893,22 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         callback: (success: Boolean, error: String) -> Unit
     ) {
         try {
-            val gatt = connectedDevices[deviceId]
-            if (gatt == null) {
-                callback(false, "Device not connected")
-                return
-            }
+            val mgr = nordicManagers[deviceId]
+                ?: return callback(false, "Device not connected")
 
-            val service = gatt.getService(UUID.fromString(serviceId))
-            if (service == null) {
-                callback(false, "Service not found")
-                return
-            }
+            val svc = UUID.fromString(serviceId)
+            val chr = UUID.fromString(characteristicId)
 
-            val characteristic = service.getCharacteristic(UUID.fromString(characteristicId))
-            if (characteristic == null) {
-                callback(false, "Characteristic not found")
-                return
-            }
-
-            // Disable notifications
-            val success = gatt.setCharacteristicNotification(characteristic, false)
-            if (!success) {
-                callback(false, "Failed to disable notifications")
-                return
-            }
-
-            // Remove the callback
-            val callbacks = deviceCallbacks[deviceId]
-            callbacks?.characteristicSubscriptions?.remove(characteristicId)
-
-            // Write to the descriptor to disable notifications on the device
-            val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            if (descriptor != null) {
-                descriptor.value = BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(descriptor)
-            }
-
-            callback(true, "")
-
+            // Attempt to disable notifications using Nordic API
+            mgr.disableNotify(svc, chr,
+                onDone = {
+                    deviceCallbacks[deviceId]?.characteristicSubscriptions?.remove(characteristicId)
+                    callback(true, "")
+                },
+                onErr = { err ->
+                    callback(false, err)
+                }
+            )
         } catch (e: Exception) {
             callback(false, "Unsubscription error: ${e.message}")
         }

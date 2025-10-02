@@ -135,6 +135,9 @@ dependencies {
   //noinspection GradleDynamicVersion
   implementation "com.facebook.react:react-native:+"
 
+  implementation "no.nordicsemi.android:ble:2.7.2"
+  implementation "no.nordicsemi.android:ble-ktx:2.7.2"
+
   // Add a dependency on NitroModules
   implementation project(":react-native-nitro-modules")
 }
