@@ -3,6 +3,7 @@ package com.margelo.nitro.co.zyke.ble
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import no.nordicsemi.android.ble.PhyRequest
+import no.nordicsemi.android.ble.observer.ConnectionObserver
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -649,7 +650,6 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     }
 
     // Connection management
-    //TODO: add disconnect callback
     override fun connect(deviceId: String, callback: (Boolean, String, String)->Unit, disconnectCallback: ((String, Boolean, String)->Unit)?) {
         try {
             initializeBluetoothIfNeeded()
@@ -659,6 +659,28 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             val mgr = MyNordicManager(ctx)
             nordicManagers[deviceId] = mgr
 
+            // Store/merge callbacks for this device
+            val dc = deviceCallbacks[deviceId] ?: DeviceCallbacks()
+            if (disconnectCallback != null) dc.disconnectCallback = disconnectCallback
+            deviceCallbacks[deviceId] = dc
+
+            // Fire JS disconnect callback on any disconnection
+            mgr.setConnectionObserver(object : ConnectionObserver {
+                override fun onDeviceConnected(device: BluetoothDevice) { }
+                override fun onDeviceConnecting(device: BluetoothDevice) { }
+                override fun onDeviceFailedToConnect(device: BluetoothDevice, reason: Int) { }
+                override fun onDeviceReady(device: BluetoothDevice) { }
+                override fun onDeviceDisconnecting(device: BluetoothDevice) { }
+                override fun onDeviceDisconnected(device: BluetoothDevice, reason: Int) {
+                    val interrupted = reason != ConnectionObserver.REASON_SUCCESS
+                    val error = if (interrupted) "Disconnected (reason=$reason)" else ""
+                    deviceCallbacks[deviceId]?.disconnectCallback?.invoke(deviceId, interrupted, error)
+                    // Clean up this device's state
+                    deviceCallbacks.remove(deviceId)
+                    nordicManagers.remove(deviceId)
+                }
+            })
+
             mgr.connectRequest(dev)
                 .useAutoConnect(false)
                 .retry(3, 200)
@@ -666,7 +688,7 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
                 .done { callback(true, deviceId, "") }
                 .fail { _, status -> callback(false, deviceId, "Connection failed: $status") }
                 .enqueue()
-            } catch (e: Exception) {
+        } catch (e: Exception) {
             callback(false, deviceId, "Connection error: ${e.message}")
         }
     }
