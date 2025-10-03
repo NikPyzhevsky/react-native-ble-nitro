@@ -12,7 +12,6 @@ build/
 plugin/build/
 
 # Generated Nitro code (regenerated via nitro-codegen)
-nitrogen/generated/
 
 # Testing
 coverage/
