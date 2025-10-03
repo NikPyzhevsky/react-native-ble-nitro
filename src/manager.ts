@@ -247,13 +247,22 @@ export class BleNitroManager {
   }
 
   /**
+   * Get OS-bonded (paired) devices (Android only)
+   * @returns Array of bonded devices
+   */
+  public getBondedDevices(): BLEDevice[] {
+    const devices = BleNitroNative.getBondedDevices();
+    return devices.map(device => convertNativeBleDeviceToBleDevice(device));
+  }
+
+  /**
    * Connect to a Bluetooth device
    * @param deviceId ID of the device to connect to
    * @param onDisconnect Optional callback for disconnect events
    * @returns Promise resolving when connected
    */
   public connect(
-    deviceId: string, 
+    deviceId: string,
     onDisconnect?: DisconnectEventCallback
   ): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -278,6 +287,26 @@ export class BleNitroManager {
           delete this._connectedDevices[deviceId];
           onDisconnect(deviceId, interrupted, error);
         } : undefined
+      );
+    });
+  }
+
+  /**
+   * Initiate bonding (pairing) with a device (Android only)
+   * @param deviceId ID of the device to bond with
+   * @returns Promise resolving when bonding is initiated/completed successfully
+   */
+  public createBond(deviceId: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      BleNitroNative.createBond(
+        deviceId,
+        (success: boolean, error: string) => {
+          if (success) {
+            resolve();
+          } else {
+            reject(new Error(error));
+          }
+        }
       );
     });
   }
