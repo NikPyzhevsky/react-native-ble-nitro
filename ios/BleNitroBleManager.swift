@@ -6,6 +6,16 @@ import NitroModules
  * Implements the HybridNativeBleNitroSpec protocol for Core Bluetooth operations
  */
 public class BleNitroBleManager: HybridNativeBleNitroSpec_base, HybridNativeBleNitroSpec_protocol {
+    //Android only methods
+    public func getBondedDevices() throws -> [BLEDevice] {
+        print("getBondedDevices not implemented on iOS\n")
+
+        return([])
+    }
+
+    public func createBond(deviceId: String, callback: @escaping (Bool, String) -> Void) throws {
+        print("createBond not implemented on iOS\n")
+    }
 
     // MARK: - Constants
     private static let restoreStateIdentifier = "react-native-ble-nitro"
