@@ -33,7 +33,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "npm run clean && npm run nitro-codegen && npm run build:plugin && npm run build:esm && npm run build:commonjs",
+    "build": "npm run clean && npm run build:plugin && npm run build:esm && npm run build:commonjs",
     "build:esm": "tsc",
     "build:commonjs": "tsc --project tsconfig.commonjs.json",
     "build:plugin": "tsc --project plugin/tsconfig.json",
