@@ -5,9 +5,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build outputs
-lib/
 build/
-dist/
 *.tgz
 
 # Plugin build outputs
