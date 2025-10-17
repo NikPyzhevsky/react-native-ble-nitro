@@ -515,4 +515,31 @@ open class HybridNativeBleNitroSpec_cxx {
       return bridge.create_Result_std__shared_ptr_Promise_void___(__exceptionPtr)
     }
   }
+  
+  @inline(__always)
+  public final func startBackgroundTask(callback: bridge.Func_void, time: Double) -> bridge.Result_void_ {
+    do {
+      try self.__implementation.startBackgroundTask(callback: { () -> () -> Void in
+        let __wrappedFunction = bridge.wrap_Func_void(callback)
+        return { () -> Void in
+          __wrappedFunction.call()
+        }
+      }(), time: time)
+      return bridge.create_Result_void_()
+    } catch (let __error) {
+      let __exceptionPtr = __error.toCpp()
+      return bridge.create_Result_void_(__exceptionPtr)
+    }
+  }
+  
+  @inline(__always)
+  public final func stopBackgroundTask() -> bridge.Result_void_ {
+    do {
+      try self.__implementation.stopBackgroundTask()
+      return bridge.create_Result_void_()
+    } catch (let __error) {
+      let __exceptionPtr = __error.toCpp()
+      return bridge.create_Result_void_(__exceptionPtr)
+    }
+  }
 }

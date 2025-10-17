@@ -77,6 +77,8 @@ namespace margelo::nitro::co::zyke::ble {
     OperationResult subscribeToStateChange(const std::function<void(BLEState /* state */)>& stateCallback) override;
     OperationResult unsubscribeFromStateChange() override;
     std::shared_ptr<Promise<void>> openSettings() override;
+    void startBackgroundTask(const std::function<void()>& callback, double time) override;
+    void stopBackgroundTask() override;
 
   private:
     friend HybridBase;

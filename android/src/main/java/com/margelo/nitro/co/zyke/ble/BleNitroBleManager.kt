@@ -30,6 +30,12 @@ import com.margelo.nitro.core.*
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
+
+
 /**
  * Android implementation of the BLE Nitro Module
  * This class provides the actual BLE functionality for Android devices
@@ -1047,5 +1053,49 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             promise.reject(Exception("Error opening Bluetooth settings: ${e.message}"))
         }
         return promise
+    }
+
+    private var receiver: ResultReceiver? = null
+
+    override fun startBackgroundTask(callback: () -> Unit, time: Double) {
+        val ctx = appContext ?: return
+        // time — в секундах; переведём в миллисекунды и зададим нижнюю границу
+        val intervalMs = (time * 1000.0).toLong().coerceAtLeast(250L)
+
+        // ResultReceiver: на каждом тике сервис вызовет onReceiveResult → дергаем твой колбек
+        receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+            override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                try {
+                    callback() // твой колбек (можно сделать try/catch чтобы не уронить поток)
+                } catch (_: Throwable) { /* лог при необходимости */ }
+            }
+        }
+
+        // стартуем сервис (или поднимаем, если он не запущен)
+        val intent = Intent(ctx, IntervalForegroundService::class.java).apply {
+            action = IntervalForegroundService.ACTION_START
+            putExtra(IntervalForegroundService.EXTRA_INTERVAL_MS, intervalMs)
+            putExtra(IntervalForegroundService.EXTRA_CALLBACK, receiver)
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
+        } catch (_: Exception) { /* no-op */ }
+    }
+
+    override fun stopBackgroundTask() {
+        val ctx = appContext ?: return
+        // Просим сервис остановиться и убрать уведомление
+        try {
+            ctx.startService(Intent(ctx, IntervalForegroundService::class.java).apply {
+                action = IntervalForegroundService.ACTION_STOP_ALL
+            })
+        } catch (_: Exception) { /* no-op */ }
+
+        receiver = null
     }
 }

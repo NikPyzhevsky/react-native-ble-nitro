@@ -90,6 +90,8 @@ namespace margelo::nitro::co::zyke::ble {
       virtual OperationResult subscribeToStateChange(const std::function<void(BLEState /* state */)>& stateCallback) = 0;
       virtual OperationResult unsubscribeFromStateChange() = 0;
       virtual std::shared_ptr<Promise<void>> openSettings() = 0;
+      virtual void startBackgroundTask(const std::function<void()>& callback, double time) = 0;
+      virtual void stopBackgroundTask() = 0;
 
     protected:
       // Hybrid Setup

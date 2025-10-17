@@ -38,6 +38,8 @@ public protocol HybridNativeBleNitroSpec_protocol: HybridObject {
   func subscribeToStateChange(stateCallback: @escaping (_ state: BLEState) -> Void) throws -> OperationResult
   func unsubscribeFromStateChange() throws -> OperationResult
   func openSettings() throws -> Promise<Void>
+  func startBackgroundTask(callback: @escaping () -> Void, time: Double) throws -> Void
+  func stopBackgroundTask() throws -> Void
 }
 
 /// See ``HybridNativeBleNitroSpec``

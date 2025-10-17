@@ -25,6 +25,7 @@
 #include "JFunc_void_bool_std__shared_ptr_ArrayBuffer__std__string.hpp"
 #include "JFunc_void_std__string_std__shared_ptr_ArrayBuffer_.hpp"
 #include "JFunc_void_BLEState.hpp"
+#include "JFunc_void.hpp"
 #include <NitroModules/DefaultConstructableObject.hpp>
 
 namespace margelo::nitro::co::zyke::ble {
@@ -46,6 +47,7 @@ int initialize(JavaVM* vm) {
     margelo::nitro::co::zyke::ble::JFunc_void_bool_std__shared_ptr_ArrayBuffer__std__string_cxx::registerNatives();
     margelo::nitro::co::zyke::ble::JFunc_void_std__string_std__shared_ptr_ArrayBuffer__cxx::registerNatives();
     margelo::nitro::co::zyke::ble::JFunc_void_BLEState_cxx::registerNatives();
+    margelo::nitro::co::zyke::ble::JFunc_void_cxx::registerNatives();
 
     // Register Nitro Hybrid Objects
     HybridObjectRegistry::registerHybridObjectConstructor(

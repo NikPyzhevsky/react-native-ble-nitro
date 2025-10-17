@@ -84,4 +84,6 @@ export interface NativeBleNitro extends HybridObject<{
     subscribeToStateChange(stateCallback: StateCallback): OperationResult;
     unsubscribeFromStateChange(): OperationResult;
     openSettings(): Promise<void>;
+    startBackgroundTask(callback: () => void, time: number): void;
+    stopBackgroundTask(): void;
 }

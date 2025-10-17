@@ -38,6 +38,8 @@ namespace margelo::nitro::co::zyke::ble {
       prototype.registerHybridMethod("subscribeToStateChange", &HybridNativeBleNitroSpec::subscribeToStateChange);
       prototype.registerHybridMethod("unsubscribeFromStateChange", &HybridNativeBleNitroSpec::unsubscribeFromStateChange);
       prototype.registerHybridMethod("openSettings", &HybridNativeBleNitroSpec::openSettings);
+      prototype.registerHybridMethod("startBackgroundTask", &HybridNativeBleNitroSpec::startBackgroundTask);
+      prototype.registerHybridMethod("stopBackgroundTask", &HybridNativeBleNitroSpec::stopBackgroundTask);
     });
   }
 

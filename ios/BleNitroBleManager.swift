@@ -6,6 +6,18 @@ import NitroModules
  * Implements the HybridNativeBleNitroSpec protocol for Core Bluetooth operations
  */
 public class BleNitroBleManager: HybridNativeBleNitroSpec_base, HybridNativeBleNitroSpec_protocol {
+    private var bgIntervalManager: BackgroundIntervalManager?
+
+    public func startBackgroundTask(callback: @escaping () -> Void, time: Double) throws {
+      if bgIntervalManager == nil { bgIntervalManager = BackgroundIntervalManager() }
+      bgIntervalManager?.start(interval: time, tick: callback)
+    }
+
+    public func stopBackgroundTask() throws {
+      bgIntervalManager?.stop()
+      bgIntervalManager = nil
+    }
+
     //Android only methods
     public func getBondedDevices() throws -> [BLEDevice] {
         print("getBondedDevices not implemented on iOS\n")

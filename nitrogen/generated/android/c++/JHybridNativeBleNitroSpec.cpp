@@ -56,6 +56,7 @@ namespace margelo::nitro::co::zyke::ble { enum class AndroidScanMode; }
 #include "JFunc_void_bool_std__shared_ptr_ArrayBuffer__std__string.hpp"
 #include "JFunc_void_std__string_std__shared_ptr_ArrayBuffer_.hpp"
 #include "JFunc_void_BLEState.hpp"
+#include "JFunc_void.hpp"
 
 namespace margelo::nitro::co::zyke::ble {
 
@@ -244,6 +245,14 @@ namespace margelo::nitro::co::zyke::ble {
       });
       return __promise;
     }();
+  }
+  void JHybridNativeBleNitroSpec::startBackgroundTask(const std::function<void()>& callback, double time) {
+    static const auto method = javaClassStatic()->getMethod<void(jni::alias_ref<JFunc_void::javaobject> /* callback */, double /* time */)>("startBackgroundTask_cxx");
+    method(_javaPart, JFunc_void_cxx::fromCpp(callback), time);
+  }
+  void JHybridNativeBleNitroSpec::stopBackgroundTask() {
+    static const auto method = javaClassStatic()->getMethod<void()>("stopBackgroundTask");
+    method(_javaPart);
   }
 
 } // namespace margelo::nitro::co::zyke::ble

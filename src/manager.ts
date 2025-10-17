@@ -674,11 +674,23 @@ export class BleNitroManager {
       };
   }
 
-  /**
-   * Open Bluetooth settings
-   * @returns Promise resolving when settings are opened
-   */
-  public openSettings(): Promise<void> {
-    return BleNitroNative.openSettings();
-  }
+    /**
+     * Open Bluetooth settings
+     * @returns Promise resolving when settings are opened
+     */
+    public openSettings(): Promise<void> {
+        return BleNitroNative.openSettings();
+    }
+
+    /**
+     * Open Bluetooth settings
+     * @returns Promise resolving when settings are opened
+     */
+    public startBackgroundTask(callback: ()=> void, time: number): void {
+        return BleNitroNative.startBackgroundTask(callback, time);
+    }
+
+    public stopBackgroundTask(): void {
+        return BleNitroNative.stopBackgroundTask();
+    }
 }

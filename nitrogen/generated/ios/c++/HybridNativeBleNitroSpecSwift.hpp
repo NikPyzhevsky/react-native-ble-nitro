@@ -255,6 +255,18 @@ namespace margelo::nitro::co::zyke::ble {
       auto __value = std::move(__result.value());
       return __value;
     }
+    inline void startBackgroundTask(const std::function<void()>& callback, double time) override {
+      auto __result = _swiftPart.startBackgroundTask(callback, std::forward<decltype(time)>(time));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+    }
+    inline void stopBackgroundTask() override {
+      auto __result = _swiftPart.stopBackgroundTask();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+    }
 
   private:
     BleNitro::HybridNativeBleNitroSpec_cxx _swiftPart;

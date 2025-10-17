@@ -200,6 +200,19 @@ abstract class HybridNativeBleNitroSpec: HybridObject() {
   @DoNotStrip
   @Keep
   abstract fun openSettings(): Promise<Unit>
+  
+  abstract fun startBackgroundTask(callback: () -> Unit, time: Double): Unit
+  
+  @DoNotStrip
+  @Keep
+  private fun startBackgroundTask_cxx(callback: Func_void, time: Double): Unit {
+    val __result = startBackgroundTask(callback, time)
+    return __result
+  }
+  
+  @DoNotStrip
+  @Keep
+  abstract fun stopBackgroundTask(): Unit
 
   private external fun initHybrid(): HybridData
 
