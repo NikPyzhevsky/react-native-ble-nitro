@@ -136,11 +136,10 @@ class IntervalForegroundService : Service() {
         )
 
         return builder
-            .setContentTitle("Interval Service")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_popup_sync)
-            // allow dismissal by user; we handle it via deleteIntent
-            .setOngoing(false)
+            .setContentTitle("Device session active")
+            .setContentText("Connected to your device")
+            .setSmallIcon(R.drawable.ic_notifee)
+            .setOngoing(true)
             .setDeleteIntent(deletePi)
             .build()
     }
