@@ -138,7 +138,7 @@ class IntervalForegroundService : Service() {
         return builder
             .setContentTitle("Device session active")
             .setContentText("Connected to your device")
-            .setSmallIcon(R.drawable.ic_notifee)
+            .setSmallIcon(applicationInfo.icon)
             .setOngoing(true)
             .setDeleteIntent(deletePi)
             .build()
