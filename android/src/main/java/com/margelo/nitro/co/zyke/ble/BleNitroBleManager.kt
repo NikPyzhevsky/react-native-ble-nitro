@@ -67,6 +67,11 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     //nordic bluetoothManager
     private val nordicManagers = ConcurrentHashMap<String, MyNordicManager>()
 
+    // MCU / DFU manager
+    private val mcuManager by lazy {
+        BleNitroMcuManager(getContext()!!)
+    }
+
     // Device connections
     private val connectedDevices = ConcurrentHashMap<String, BluetoothGatt>()
     private val deviceCallbacks = ConcurrentHashMap<String, DeviceCallbacks>()
@@ -1054,6 +1059,114 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         }
         return promise
     }
+
+    override fun uploadMcuImage(deviceId: String, firmwarePath: String) {
+        initializeBluetoothIfNeeded()
+        val adapter = bluetoothAdapter ?: return
+
+        val device = try {
+            adapter.getRemoteDevice(deviceId)
+        } catch (_: Exception) {
+            return
+        }
+
+        mcuManager.upload(device, firmwarePath)
+    }
+
+    override fun abortMcuUpload() {
+        mcuManager.abort()
+    }
+
+    override fun listMcuImages(deviceId: String): Array<ImageSlot> {
+        // Not supported on Android mcumgr
+        return emptyArray()
+    }
+
+    override fun confirmMcuImage(deviceId: String, hash: String) {
+        // No-op on Android (TEST_AND_CONFIRM is used)
+    }
+
+    override fun resetMcuDevice(deviceId: String) {
+        // No-op: reset handled by MCUboot during DFU
+    }
+
+    override fun getMcuState(): DfuState {
+        return mcuManager.getState()
+    }
+
+    override fun onMcuStateChanged(callback: (state: DfuState) -> Unit) {
+        mcuManager.onState(callback)
+    }
+
+    override fun onMcuProgress(callback: (progress: DfuProgress) -> Unit) {
+        mcuManager.onProgress(callback)
+    }
+
+    override fun onMcuError(callback: (error: DfuError) -> Unit) {
+        mcuManager.onError(callback)
+    }
+
+        override fun clear() {
+            // Stop BLE scan if running
+            try {
+                stopScan()
+            } catch (_: Exception) {}
+
+            // Abort MCU / DFU operation if active
+            try {
+                mcuManager.abort()
+            } catch (_: Exception) {}
+
+            // Disconnect all Nordic managers and clear them
+            try {
+                nordicManagers.forEach { (_, mgr) ->
+                    try {
+                        mgr.disconnect().enqueue()
+                    } catch (_: Exception) {}
+                }
+                nordicManagers.clear()
+            } catch (_: Exception) {}
+
+            // Close all GATT connections explicitly
+            try {
+                connectedDevices.forEach { (_, gatt) ->
+                    try {
+                        gatt.disconnect()
+                        gatt.close()
+                    } catch (_: Exception) {}
+                }
+                connectedDevices.clear()
+            } catch (_: Exception) {}
+
+            // Clear callbacks and state maps
+            deviceCallbacks.clear()
+            writeCallbacks.clear()
+            rssiCallbacks.clear()
+            discoveredDevicesInCurrentScan.clear()
+
+            // Unregister bond receiver if needed
+            try {
+                unregisterBondReceiverIfIdle()
+            } catch (_: Exception) {}
+
+            // Unregister Bluetooth state receiver
+            try {
+                bluetoothStateReceiver?.let { receiver ->
+                    appContext?.unregisterReceiver(receiver)
+                }
+            } catch (_: Exception) {}
+            bluetoothStateReceiver = null
+            stateCallback = null
+            restoreStateCallback = null
+
+            // Reset scanner references
+            bleScanner = null
+            scanCallback = null
+            isCurrentlyScanning = false
+
+            // Reset adapter reference (forces re-init on next use)
+            bluetoothAdapter = null
+        }
 
     private var receiver: ResultReceiver? = null
 

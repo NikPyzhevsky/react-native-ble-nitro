@@ -1,4 +1,4 @@
-import BleNitroNative from './specs/NativeBleNitro';
+import BleNitroNative, {DfuError, DfuProgress, DfuState} from './specs/NativeBleNitro';
 import {
   ScanFilter as NativeScanFilter,
   BLEDevice as NativeBLEDevice,
@@ -692,5 +692,66 @@ export class BleNitroManager {
 
     public stopBackgroundTask(): void {
         return BleNitroNative.stopBackgroundTask();
+    }
+
+    // ---------------------------------------------------------------------------
+    // MCU Manager (DFU)
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Upload firmware package using MCU Manager (SMP).
+     * The device must already be connected.
+     *
+     * @param deviceId BLE device id (already connected)
+     * @param firmwarePath absolute path to .zip or .bin on the device filesystem
+     */
+    public uploadMcuImage(deviceId: string, firmwarePath: string): void {
+        BleNitroNative.uploadMcuImage(deviceId, firmwarePath);
+    }
+
+    /** Abort current DFU upload (if any). */
+    public abortMcuUpload(): void {
+        BleNitroNative.abortMcuUpload();
+    }
+
+    /** Read MCUboot image slots. */
+    public listMcuImages(deviceId: string) {
+        return BleNitroNative.listMcuImages(deviceId);
+    }
+
+    /** Mark image in slot as confirmed. */
+    public confirmMcuImage(deviceId: string, hash: string): void {
+        BleNitroNative.confirmMcuImage(deviceId, hash);
+    }
+
+    /** Reset device after upload / confirm. */
+    public resetMcuDevice(deviceId: string): void {
+        BleNitroNative.resetMcuDevice(deviceId);
+    }
+
+    /** Get current DFU state. */
+    public getMcuState(): DfuState {
+        return BleNitroNative.getMcuState() as unknown as DfuState;
+    }
+
+    /** Subscribe to DFU state changes. */
+    public onMcuStateChanged(callback: (state: DfuState) => void): void {
+        BleNitroNative.onMcuStateChanged((state: DfuState) => {
+            callback(state);
+        });
+    }
+
+    /** Subscribe to DFU progress updates. */
+    public onMcuProgress(callback: (progress: DfuProgress) => void): void {
+        BleNitroNative.onMcuProgress((progress: DfuProgress) => {
+            callback(progress);
+        });
+    }
+
+    /** Subscribe to DFU errors. */
+    public onMcuError(callback: (error: DfuError) => void): void {
+        BleNitroNative.onMcuError((error: DfuError) => {
+            callback(error);
+        });
     }
 }

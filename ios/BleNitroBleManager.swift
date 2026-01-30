@@ -6,6 +6,44 @@ import NitroModules
  * Implements the HybridNativeBleNitroSpec protocol for Core Bluetooth operations
  */
 public class BleNitroBleManager: HybridNativeBleNitroSpec_base, HybridNativeBleNitroSpec_protocol {
+    private lazy var mcuManager = BleNitroMcuManager(bleManager: self)
+
+    public func uploadMcuImage(deviceId: String, firmwarePath: String) throws {
+        try mcuManager.uploadImage(deviceId: deviceId, firmwarePath: firmwarePath)
+    }
+
+    public func abortMcuUpload() throws {
+        try mcuManager.abortUpload();
+    }
+
+    public func listMcuImages(deviceId: String) throws -> [ImageSlot] {
+        try mcuManager.listImages(deviceId: deviceId);
+    }
+
+    public func confirmMcuImage(deviceId: String, hash: String) throws {
+        try mcuManager.confirmImage(deviceId: deviceId, hash: hash);
+    }
+
+    public func resetMcuDevice(deviceId: String) throws {
+        try mcuManager.resetDevice(deviceId: deviceId);
+    }
+
+    public func getMcuState() throws -> DfuState {
+        try mcuManager.getState();
+    }
+
+    public func onMcuStateChanged(callback: @escaping (DfuState) -> Void) throws {
+        try? mcuManager.onStateChanged(callback: callback);
+    }
+
+    public func onMcuProgress(callback: @escaping (DfuProgress) -> Void) throws {
+        try? mcuManager.onProgress(callback: callback);
+    }
+
+    public func onMcuError(callback: @escaping (DfuError) -> Void) throws {
+        try? mcuManager.onError(callback: callback);
+    }
+
     private var bgIntervalManager: BackgroundIntervalManager?
 
     public func startBackgroundTask(callback: @escaping () -> Void, time: Double) throws {
@@ -211,6 +249,16 @@ public class BleNitroBleManager: HybridNativeBleNitroSpec_base, HybridNativeBleN
         }
 
         return connectedDevices
+    }
+
+    internal func getPeripheral(deviceId: String) -> CBPeripheral? {
+        if let peripheral = connectedPeripherals[deviceId] {
+            return peripheral
+        }
+        if let peripheral = discoveredPeripherals[deviceId] {
+            return peripheral
+        }
+        return nil
     }
 
     // MARK: - Connection Management

@@ -217,5 +217,11 @@ export declare class BleNitroManager {
      * @returns Promise resolving when settings are opened
      */
     openSettings(): Promise<void>;
+    /**
+     * Open Bluetooth settings
+     * @returns Promise resolving when settings are opened
+     */
+    startBackgroundTask(callback: () => void, time: number): void;
+    stopBackgroundTask(): void;
 }
 //# sourceMappingURL=manager.d.ts.map

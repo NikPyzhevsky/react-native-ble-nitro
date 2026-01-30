@@ -137,7 +137,8 @@ dependencies {
 
   implementation "no.nordicsemi.android:ble:2.7.2"
   implementation "no.nordicsemi.android:ble-ktx:2.7.2"
-
+  implementation "no.nordicsemi.android:mcumgr-core:2.7.4"
+  implementation "no.nordicsemi.android:mcumgr-ble:2.7.4"
   // Add a dependency on NitroModules
   implementation project(":react-native-nitro-modules")
 }

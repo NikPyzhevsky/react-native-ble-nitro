@@ -1,4 +1,34 @@
 import { HybridObject } from 'react-native-nitro-modules';
+export declare enum DfuState {
+    Idle = 0,
+    Connecting = 1,
+    Uploading = 2,
+    Paused = 3,
+    Validating = 4,
+    Confirming = 5,
+    Resetting = 6,
+    Completed = 7,
+    Aborted = 8,
+    Error = 9
+}
+export interface DfuProgress {
+    percent: number;
+    bytesSent: number;
+    bytesTotal: number;
+}
+export interface ImageSlot {
+    slot: number;
+    version: string;
+    hash: string;
+    bootable: boolean;
+    pending: boolean;
+    confirmed: boolean;
+    active: boolean;
+}
+export interface DfuError {
+    code: number;
+    message: string;
+}
 export type BLEValue = ArrayBuffer;
 export declare enum BLEState {
     Unknown = 0,
@@ -84,6 +114,37 @@ export interface NativeBleNitro extends HybridObject<{
     subscribeToStateChange(stateCallback: StateCallback): OperationResult;
     unsubscribeFromStateChange(): OperationResult;
     openSettings(): Promise<void>;
+    /**
+     * Upload firmware image using MCU Manager (SMP)
+     *
+     * @param deviceId BLE device id (already connected)
+     * @param firmwarePath absolute path to .bin
+     */
+    uploadMcuImage(deviceId: string, firmwarePath: string): void;
+    /**
+     * Abort current upload
+     */
+    abortMcuUpload(): void;
+    /**
+     * Read MCUboot image slots
+     */
+    listMcuImages(deviceId: string): ImageSlot[];
+    /**
+     * Mark image in slot as confirmed
+     */
+    confirmMcuImage(deviceId: string, hash: string): void;
+    /**
+     * Reset device after upload / confirm
+     */
+    resetMcuDevice(deviceId: string): void;
+    /**
+     * Current DFU state
+     */
+    getMcuState(): DfuState;
+    /** MCU Manager callbacks */
+    onMcuStateChanged(callback: (state: DfuState) => void): void;
+    onMcuProgress(callback: (progress: DfuProgress) => void): void;
+    onMcuError(callback: (error: DfuError) => void): void;
     startBackgroundTask(callback: () => void, time: number): void;
     stopBackgroundTask(): void;
 }
