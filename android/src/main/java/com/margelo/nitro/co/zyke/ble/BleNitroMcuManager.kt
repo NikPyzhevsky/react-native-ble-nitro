@@ -1,7 +1,12 @@
 package com.margelo.nitro.co.zyke.ble
 
+import android.Manifest
 import android.content.Context
 import android.bluetooth.BluetoothDevice
+import android.util.Log
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import androidx.annotation.RequiresPermission
 import io.runtime.mcumgr.ble.McuMgrBleTransport
 import io.runtime.mcumgr.dfu.FirmwareUpgradeCallback
 import io.runtime.mcumgr.dfu.mcuboot.FirmwareUpgradeManager.State
@@ -17,6 +22,10 @@ import java.util.zip.ZipInputStream
 class BleNitroMcuManager(
     private val context: Context
 ) {
+
+    private companion object {
+        private const val TAG = "BleNitroMcuManager"
+    }
 
     private var dfuManager: FirmwareUpgradeManager? = null
     private val state = AtomicReference(DfuState.IDLE)
@@ -68,10 +77,12 @@ class BleNitroMcuManager(
             val imageBytes = binFile.readBytes()
 
             val transport = McuMgrBleTransport(context, device)
+            Log.i(TAG, "DFU start over BLE (GATT). Device=" + device.address)
 
             val callback = object : FirmwareUpgradeCallback<State> {
 
                 override fun onUpgradeStarted(controller: FirmwareUpgradeController) {
+                    Log.i(TAG, "DFU upgrade started over BLE/GATT")
                     updateState(DfuState.CONNECTING)
                 }
 
@@ -104,11 +115,34 @@ class BleNitroMcuManager(
                     )
                 }
 
+                @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
                 override fun onUpgradeCompleted() {
+                    Log.i(TAG, "DFU completed. Firmware uploaded successfully. Device rebooting (BLE/GATT will be invalid)")
                     updateState(DfuState.COMPLETED)
+
+                    // Properly release mcumgr BLE transport (closes BluetoothGatt internally)
+                    try {
+                        Log.i(TAG, "Releasing McuMgr BLE transport")
+                        dfuManager?.transporter?.release()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error while releasing transport", e)
+                    }
+
+                    // Extra safety: force-close GATT using BluetoothDevice (Android BLE edge-case)
+                    try {
+                        Log.i(TAG, "Force closing GATT connection via BluetoothDevice")
+                        val gatt = device.connectGatt(context, false, object : BluetoothGattCallback() {})
+                        gatt.disconnect()
+                        gatt.close()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to force-close GATT", e)
+                    }
+
+                    dfuManager = null
                 }
 
                 override fun onUpgradeFailed(state: State?, error: McuMgrException?) {
+                    Log.e(TAG, "DFU failed at state=" + state + ", error=" + error?.message, error)
                     updateState(DfuState.ERROR)
                     errorCb?.invoke(
                         DfuError(
@@ -146,6 +180,7 @@ class BleNitroMcuManager(
     }
 
     fun abort() {
+        Log.w(TAG, "DFU aborted by user")
         dfuManager?.cancel()
     }
 

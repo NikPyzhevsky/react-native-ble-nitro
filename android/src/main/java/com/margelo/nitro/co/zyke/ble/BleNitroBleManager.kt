@@ -1106,68 +1106,6 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         mcuManager.onError(callback)
     }
 
-        override fun clear() {
-            // Stop BLE scan if running
-            try {
-                stopScan()
-            } catch (_: Exception) {}
-
-            // Abort MCU / DFU operation if active
-            try {
-                mcuManager.abort()
-            } catch (_: Exception) {}
-
-            // Disconnect all Nordic managers and clear them
-            try {
-                nordicManagers.forEach { (_, mgr) ->
-                    try {
-                        mgr.disconnect().enqueue()
-                    } catch (_: Exception) {}
-                }
-                nordicManagers.clear()
-            } catch (_: Exception) {}
-
-            // Close all GATT connections explicitly
-            try {
-                connectedDevices.forEach { (_, gatt) ->
-                    try {
-                        gatt.disconnect()
-                        gatt.close()
-                    } catch (_: Exception) {}
-                }
-                connectedDevices.clear()
-            } catch (_: Exception) {}
-
-            // Clear callbacks and state maps
-            deviceCallbacks.clear()
-            writeCallbacks.clear()
-            rssiCallbacks.clear()
-            discoveredDevicesInCurrentScan.clear()
-
-            // Unregister bond receiver if needed
-            try {
-                unregisterBondReceiverIfIdle()
-            } catch (_: Exception) {}
-
-            // Unregister Bluetooth state receiver
-            try {
-                bluetoothStateReceiver?.let { receiver ->
-                    appContext?.unregisterReceiver(receiver)
-                }
-            } catch (_: Exception) {}
-            bluetoothStateReceiver = null
-            stateCallback = null
-            restoreStateCallback = null
-
-            // Reset scanner references
-            bleScanner = null
-            scanCallback = null
-            isCurrentlyScanning = false
-
-            // Reset adapter reference (forces re-init on next use)
-            bluetoothAdapter = null
-        }
-
     private var receiver: ResultReceiver? = null
 
     override fun startBackgroundTask(callback: () -> Unit, time: Double) {
