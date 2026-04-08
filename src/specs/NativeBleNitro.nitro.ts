@@ -191,6 +191,6 @@ export interface NativeBleNitro extends HybridObject<{ ios: 'swift'; android: 'k
     onMcuError(callback: (error: DfuError) => void): void
 
     //background
-    startBackgroundTask(callback: ()=> void, time: number): void,
+    startBackgroundTask(callback: ()=> void, time: number, onClose: ()=> void): void,
     stopBackgroundTask(): void,
 }

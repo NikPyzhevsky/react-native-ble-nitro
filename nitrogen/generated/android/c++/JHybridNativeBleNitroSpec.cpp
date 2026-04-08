@@ -312,9 +312,9 @@ namespace margelo::nitro::co::zyke::ble {
     static const auto method = javaClassStatic()->getMethod<void(jni::alias_ref<JFunc_void_DfuError::javaobject> /* callback */)>("onMcuError_cxx");
     method(_javaPart, JFunc_void_DfuError_cxx::fromCpp(callback));
   }
-  void JHybridNativeBleNitroSpec::startBackgroundTask(const std::function<void()>& callback, double time) {
-    static const auto method = javaClassStatic()->getMethod<void(jni::alias_ref<JFunc_void::javaobject> /* callback */, double /* time */)>("startBackgroundTask_cxx");
-    method(_javaPart, JFunc_void_cxx::fromCpp(callback), time);
+  void JHybridNativeBleNitroSpec::startBackgroundTask(const std::function<void()>& callback, double time, const std::function<void()>& onClose) {
+    static const auto method = javaClassStatic()->getMethod<void(jni::alias_ref<JFunc_void::javaobject> /* callback */, double /* time */, jni::alias_ref<JFunc_void::javaobject> /* onClose */)>("startBackgroundTask_cxx");
+    method(_javaPart, JFunc_void_cxx::fromCpp(callback), time, JFunc_void_cxx::fromCpp(onClose));
   }
   void JHybridNativeBleNitroSpec::stopBackgroundTask() {
     static const auto method = javaClassStatic()->getMethod<void()>("stopBackgroundTask");

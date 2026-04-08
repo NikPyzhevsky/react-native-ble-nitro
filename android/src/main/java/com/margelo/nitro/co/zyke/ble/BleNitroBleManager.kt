@@ -1107,8 +1107,9 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
     }
 
     private var receiver: ResultReceiver? = null
+    private var closeReceiver: ResultReceiver? = null
 
-    override fun startBackgroundTask(callback: () -> Unit, time: Double) {
+    override fun startBackgroundTask(callback: () -> Unit, time: Double, onClose: () -> Unit) {
         val ctx = appContext ?: return
         // time — в секундах; переведём в миллисекунды и зададим нижнюю границу
         val intervalMs = (time * 1000.0).toLong().coerceAtLeast(250L)
@@ -1122,11 +1123,20 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
             }
         }
 
+        closeReceiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+            override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                try {
+                    onClose()
+                } catch (_: Throwable) { /* лог при необходимости */ }
+            }
+        }
+
         // стартуем сервис (или поднимаем, если он не запущен)
         val intent = Intent(ctx, IntervalForegroundService::class.java).apply {
             action = IntervalForegroundService.ACTION_START
             putExtra(IntervalForegroundService.EXTRA_INTERVAL_MS, intervalMs)
             putExtra(IntervalForegroundService.EXTRA_CALLBACK, receiver)
+            putExtra(IntervalForegroundService.EXTRA_ON_CLOSE_CALLBACK, closeReceiver)
         }
 
         try {
@@ -1144,9 +1154,14 @@ class BleNitroBleManager : HybridNativeBleNitroSpec() {
         try {
             ctx.startService(Intent(ctx, IntervalForegroundService::class.java).apply {
                 action = IntervalForegroundService.ACTION_STOP_ALL
+                putExtra(
+                    IntervalForegroundService.EXTRA_STOP_REASON,
+                    IntervalForegroundService.STOP_REASON_EXPLICIT
+                )
             })
         } catch (_: Exception) { /* no-op */ }
 
         receiver = null
+        closeReceiver = null
     }
 }

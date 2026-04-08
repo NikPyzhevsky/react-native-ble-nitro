@@ -639,14 +639,19 @@ open class HybridNativeBleNitroSpec_cxx {
   }
   
   @inline(__always)
-  public final func startBackgroundTask(callback: bridge.Func_void, time: Double) -> bridge.Result_void_ {
+  public final func startBackgroundTask(callback: bridge.Func_void, time: Double, onClose: bridge.Func_void) -> bridge.Result_void_ {
     do {
       try self.__implementation.startBackgroundTask(callback: { () -> () -> Void in
         let __wrappedFunction = bridge.wrap_Func_void(callback)
         return { () -> Void in
           __wrappedFunction.call()
         }
-      }(), time: time)
+      }(), time: time, onClose: { () -> () -> Void in
+        let __wrappedFunction = bridge.wrap_Func_void(onClose)
+        return { () -> Void in
+          __wrappedFunction.call()
+        }
+      }())
       return bridge.create_Result_void_()
     } catch (let __error) {
       let __exceptionPtr = __error.toCpp()

@@ -47,7 +47,7 @@ public protocol HybridNativeBleNitroSpec_protocol: HybridObject {
   func onMcuStateChanged(callback: @escaping (_ state: DfuState) -> Void) throws -> Void
   func onMcuProgress(callback: @escaping (_ progress: DfuProgress) -> Void) throws -> Void
   func onMcuError(callback: @escaping (_ error: DfuError) -> Void) throws -> Void
-  func startBackgroundTask(callback: @escaping () -> Void, time: Double) throws -> Void
+  func startBackgroundTask(callback: @escaping () -> Void, time: Double, onClose: @escaping () -> Void) throws -> Void
   func stopBackgroundTask() throws -> Void
 }
 

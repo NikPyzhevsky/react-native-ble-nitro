@@ -145,6 +145,6 @@ export interface NativeBleNitro extends HybridObject<{
     onMcuStateChanged(callback: (state: DfuState) => void): void;
     onMcuProgress(callback: (progress: DfuProgress) => void): void;
     onMcuError(callback: (error: DfuError) => void): void;
-    startBackgroundTask(callback: () => void, time: number): void;
+    startBackgroundTask(callback: () => void, time: number, onClose: () => void): void;
     stopBackgroundTask(): void;
 }

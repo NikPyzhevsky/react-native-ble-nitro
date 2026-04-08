@@ -1,3 +1,4 @@
+import { DfuError, DfuProgress, DfuState } from './specs/NativeBleNitro';
 import { BLEDevice as NativeBLEDevice, BLEState as NativeBLEState, AndroidScanMode as NativeAndroidScanMode } from './specs/NativeBleNitro';
 export type ByteArray = number[];
 export interface ScanFilter {
@@ -221,7 +222,31 @@ export declare class BleNitroManager {
      * Open Bluetooth settings
      * @returns Promise resolving when settings are opened
      */
-    startBackgroundTask(callback: () => void, time: number): void;
+    startBackgroundTask(callback: () => void, time: number, onClose?: () => void): void;
     stopBackgroundTask(): void;
+    /**
+     * Upload firmware package using MCU Manager (SMP).
+     * The device must already be connected.
+     *
+     * @param deviceId BLE device id (already connected)
+     * @param firmwarePath absolute path to .zip or .bin on the device filesystem
+     */
+    uploadMcuImage(deviceId: string, firmwarePath: string): void;
+    /** Abort current DFU upload (if any). */
+    abortMcuUpload(): void;
+    /** Read MCUboot image slots. */
+    listMcuImages(deviceId: string): import("./specs/NativeBleNitro.nitro").ImageSlot[];
+    /** Mark image in slot as confirmed. */
+    confirmMcuImage(deviceId: string, hash: string): void;
+    /** Reset device after upload / confirm. */
+    resetMcuDevice(deviceId: string): void;
+    /** Get current DFU state. */
+    getMcuState(): DfuState;
+    /** Subscribe to DFU state changes. */
+    onMcuStateChanged(callback: (state: DfuState) => void): void;
+    /** Subscribe to DFU progress updates. */
+    onMcuProgress(callback: (progress: DfuProgress) => void): void;
+    /** Subscribe to DFU errors. */
+    onMcuError(callback: (error: DfuError) => void): void;
 }
 //# sourceMappingURL=manager.d.ts.map

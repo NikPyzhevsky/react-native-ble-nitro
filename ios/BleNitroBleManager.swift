@@ -46,7 +46,7 @@ public class BleNitroBleManager: HybridNativeBleNitroSpec_base, HybridNativeBleN
 
     private var bgIntervalManager: BackgroundIntervalManager?
 
-    public func startBackgroundTask(callback: @escaping () -> Void, time: Double) throws {
+    public func startBackgroundTask(callback: @escaping () -> Void, time: Double, onClose: @escaping () -> Void) throws {
       if bgIntervalManager == nil { bgIntervalManager = BackgroundIntervalManager() }
       bgIntervalManager?.start(interval: time, tick: callback)
     }

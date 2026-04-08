@@ -111,7 +111,7 @@ namespace margelo::nitro::co::zyke::ble {
       virtual void onMcuStateChanged(const std::function<void(DfuState /* state */)>& callback) = 0;
       virtual void onMcuProgress(const std::function<void(const DfuProgress& /* progress */)>& callback) = 0;
       virtual void onMcuError(const std::function<void(const DfuError& /* error */)>& callback) = 0;
-      virtual void startBackgroundTask(const std::function<void()>& callback, double time) = 0;
+      virtual void startBackgroundTask(const std::function<void()>& callback, double time, const std::function<void()>& onClose) = 0;
       virtual void stopBackgroundTask() = 0;
 
     protected:

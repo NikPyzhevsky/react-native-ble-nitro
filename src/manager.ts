@@ -562,7 +562,9 @@ export class BleNitroManager {
       (success, error) => {
         _success = success;
         if (!success) {
-          throw new Error(error);
+          // Avoid crashing JS runtime on native callback errors (e.g. iOS "Encryption is insufficient").
+          console.warn(`[BleNitro] subscribeToCharacteristic failed: ${error}`);
+          return;
         }
       }
     );
@@ -686,8 +688,8 @@ export class BleNitroManager {
      * Open Bluetooth settings
      * @returns Promise resolving when settings are opened
      */
-    public startBackgroundTask(callback: ()=> void, time: number): void {
-        return BleNitroNative.startBackgroundTask(callback, time);
+    public startBackgroundTask(callback: ()=> void, time: number, onClose?: ()=> void): void {
+        return BleNitroNative.startBackgroundTask(callback, time, onClose ?? (() => {}));
     }
 
     public stopBackgroundTask(): void {

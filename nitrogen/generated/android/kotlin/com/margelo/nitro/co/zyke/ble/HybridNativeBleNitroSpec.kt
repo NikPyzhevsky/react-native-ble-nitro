@@ -252,12 +252,12 @@ abstract class HybridNativeBleNitroSpec: HybridObject() {
     return __result
   }
   
-  abstract fun startBackgroundTask(callback: () -> Unit, time: Double): Unit
+  abstract fun startBackgroundTask(callback: () -> Unit, time: Double, onClose: () -> Unit): Unit
   
   @DoNotStrip
   @Keep
-  private fun startBackgroundTask_cxx(callback: Func_void, time: Double): Unit {
-    val __result = startBackgroundTask(callback, time)
+  private fun startBackgroundTask_cxx(callback: Func_void, time: Double, onClose: Func_void): Unit {
+    val __result = startBackgroundTask(callback, time, onClose)
     return __result
   }
   

@@ -222,7 +222,7 @@ export declare class BleNitroManager {
      * Open Bluetooth settings
      * @returns Promise resolving when settings are opened
      */
-    startBackgroundTask(callback: () => void, time: number): void;
+    startBackgroundTask(callback: () => void, time: number, onClose?: () => void): void;
     stopBackgroundTask(): void;
     /**
      * Upload firmware package using MCU Manager (SMP).

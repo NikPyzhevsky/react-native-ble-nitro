@@ -325,8 +325,8 @@ namespace margelo::nitro::co::zyke::ble {
         std::rethrow_exception(__result.error());
       }
     }
-    inline void startBackgroundTask(const std::function<void()>& callback, double time) override {
-      auto __result = _swiftPart.startBackgroundTask(callback, std::forward<decltype(time)>(time));
+    inline void startBackgroundTask(const std::function<void()>& callback, double time, const std::function<void()>& onClose) override {
+      auto __result = _swiftPart.startBackgroundTask(callback, std::forward<decltype(time)>(time), onClose);
       if (__result.hasError()) [[unlikely]] {
         std::rethrow_exception(__result.error());
       }

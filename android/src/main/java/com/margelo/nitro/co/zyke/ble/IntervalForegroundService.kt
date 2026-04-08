@@ -16,6 +16,11 @@ class IntervalForegroundService : Service() {
 
         const val EXTRA_INTERVAL_MS = "intervalMs"
         const val EXTRA_CALLBACK = "callback"
+        const val EXTRA_ON_CLOSE_CALLBACK = "onCloseCallback"
+        const val EXTRA_STOP_REASON = "stopReason"
+
+        const val STOP_REASON_EXPLICIT = "explicit"
+        const val STOP_REASON_NOTIFICATION_DISMISSED = "notification_dismissed"
 
         private const val TAG = "IntervalFGService"
     }
@@ -23,6 +28,7 @@ class IntervalForegroundService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var intervalMs: Long = 5000
     private var callback: ResultReceiver? = null
+    private var onCloseCallback: ResultReceiver? = null
     private var isInForeground = false
 
     private val tickRunnable = object : Runnable {
@@ -68,6 +74,15 @@ class IntervalForegroundService : Service() {
                     }
                 }
 
+                if (intent != null) {
+                    onCloseCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(EXTRA_ON_CLOSE_CALLBACK, ResultReceiver::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(EXTRA_ON_CLOSE_CALLBACK)
+                    }
+                }
+
                 if (callback == null) {
                     Log.w(TAG, "ResultReceiver callback is NULL — ticks will do nothing.")
                 }
@@ -78,6 +93,8 @@ class IntervalForegroundService : Service() {
             }
 
             ACTION_STOP_ALL -> {
+                notifyClosedIfNeeded(intent.getStringExtra(EXTRA_STOP_REASON))
+
                 // Stop ticker
                 handler.removeCallbacks(tickRunnable)
 
@@ -95,21 +112,20 @@ class IntervalForegroundService : Service() {
                 stopSelf()
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.d(TAG, "onTaskRemoved()")
+        stopServiceCleanly()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy()")
         handler.removeCallbacks(tickRunnable)
         if (isInForeground) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(Service.STOP_FOREGROUND_REMOVE)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
-            }
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID)
-            isInForeground = false
+            stopForegroundNotification()
         }
         super.onDestroy()
     }
@@ -128,7 +144,10 @@ class IntervalForegroundService : Service() {
         val deletePi = PendingIntent.getService(
             this,
             0,
-            Intent(this, IntervalForegroundService::class.java).apply { action = ACTION_STOP_ALL },
+            Intent(this, IntervalForegroundService::class.java).apply {
+                action = ACTION_STOP_ALL
+                putExtra(EXTRA_STOP_REASON, STOP_REASON_NOTIFICATION_DISMISSED)
+            },
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_CANCEL_CURRENT
             else
@@ -154,6 +173,40 @@ class IntervalForegroundService : Service() {
             )
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(ch)
+        }
+    }
+
+    private fun stopServiceCleanly() {
+        handler.removeCallbacks(tickRunnable)
+        if (isInForeground) {
+            stopForegroundNotification()
+        }
+        stopSelf()
+    }
+
+    private fun stopForegroundNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID)
+        isInForeground = false
+    }
+
+    private fun notifyClosedIfNeeded(stopReason: String?) {
+        if (stopReason != STOP_REASON_NOTIFICATION_DISMISSED) {
+            return
+        }
+
+        try {
+            onCloseCallback?.send(0, Bundle().apply {
+                putLong("timestamp", System.currentTimeMillis())
+                putString(EXTRA_STOP_REASON, stopReason)
+            })
+        } catch (_: Throwable) {
+            Log.w(TAG, "Failed to deliver onClose callback")
         }
     }
 }
