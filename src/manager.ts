@@ -76,6 +76,21 @@ export type BleNitroManagerOptions = {
   onRestoredState?: RestoreStateCallback;
 };
 
+type SharedCharacteristicSubscription = {
+  deviceId: string;
+  serviceId: string;
+  characteristicId: string;
+  listeners: Map<number, SharedCharacteristicListener>;
+  nativeSubscribed: boolean;
+  nativeSubscribePending: boolean;
+  nativeUnsubscribePending: boolean;
+};
+
+type SharedCharacteristicListener = {
+  callback: CharacteristicUpdateCallback;
+  source?: string;
+};
+
 export function mapNativeBLEStateToBLEState(nativeState: NativeBLEState): BLEState {
   const map = {
     0: BLEState.Unknown,
@@ -119,9 +134,17 @@ export function byteArrayToArrayBuffer(data: ByteArray): ArrayBuffer {
   return new Uint8Array(data).buffer;
 }
 
+function logSharedSubscription(message: string) {
+  void message;
+}
+
 export class BleNitroManager {
   private _isScanning: boolean = false;
   private _connectedDevices: { [deviceId: string]: boolean } = {};
+  private _sharedCharacteristicSubscriptions: {
+    [subscriptionKey: string]: SharedCharacteristicSubscription;
+  } = {};
+  private _nextSubscriptionListenerId = 1;
 
   private _restoredStateCallback: RestoreStateCallback | null = null;
   private _restoredState: BLEDevice[] | null = null;
@@ -170,6 +193,204 @@ export class BleNitroManager {
 
   public static normalizeGattUUIDs(uuids: string[]): string[] {
     return uuids.map((uuid) => BleNitroManager.normalizeGattUUID(uuid));
+  }
+
+  private static createCharacteristicSubscriptionKey(
+    deviceId: string,
+    serviceId: string,
+    characteristicId: string
+  ): string {
+    return [
+      deviceId,
+      BleNitroManager.normalizeGattUUID(serviceId),
+      BleNitroManager.normalizeGattUUID(characteristicId),
+    ].join('|');
+  }
+
+  private describeListenerSources(subscription: SharedCharacteristicSubscription): string {
+    const sources = Array.from(subscription.listeners.values()).map(
+      (listener) => listener.source ?? 'unknown'
+    );
+
+    return sources.length > 0 ? sources.join(',') : '-';
+  }
+
+  private ensureCharacteristicSubscription(
+    subscriptionKey: string,
+    subscription: SharedCharacteristicSubscription
+  ): void {
+    if (
+      subscription.nativeSubscribed ||
+      subscription.nativeSubscribePending ||
+      subscription.nativeUnsubscribePending
+    ) {
+      logSharedSubscription(
+        `skip ensure key=${subscriptionKey} listeners=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)} nativeSubscribed=${subscription.nativeSubscribed} subscribePending=${subscription.nativeSubscribePending} unsubscribePending=${subscription.nativeUnsubscribePending}`
+      );
+      return;
+    }
+
+    logSharedSubscription(
+      `native subscribe start key=${subscriptionKey} listeners=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)}`
+    );
+    subscription.nativeSubscribePending = true;
+
+    BleNitroNative.subscribeToCharacteristic(
+      subscription.deviceId,
+      subscription.serviceId,
+      subscription.characteristicId,
+      (charId: string, data: ArrayBuffer) => {
+        const currentSubscription = this._sharedCharacteristicSubscriptions[subscriptionKey];
+
+        if (!currentSubscription) {
+          return;
+        }
+
+        const byteArray = arrayBufferToByteArray(data);
+        currentSubscription.listeners.forEach((listener) => {
+          listener.callback(charId, byteArray);
+        });
+      },
+      (success, error) => {
+        const currentSubscription = this._sharedCharacteristicSubscriptions[subscriptionKey];
+
+        if (!currentSubscription) {
+          return;
+        }
+
+        currentSubscription.nativeSubscribePending = false;
+
+        if (!success) {
+          logSharedSubscription(
+            `native subscribe failed key=${subscriptionKey} listeners=${currentSubscription.listeners.size} sources=${this.describeListenerSources(currentSubscription)} error=${error}`
+          );
+          console.warn(`[BleNitro] subscribeToCharacteristic failed: ${error}`);
+
+          if (currentSubscription.listeners.size === 0) {
+            delete this._sharedCharacteristicSubscriptions[subscriptionKey];
+          }
+          return;
+        }
+
+        currentSubscription.nativeSubscribed = true;
+        logSharedSubscription(
+          `native subscribe success key=${subscriptionKey} listeners=${currentSubscription.listeners.size} sources=${this.describeListenerSources(currentSubscription)}`
+        );
+
+        if (currentSubscription.listeners.size === 0) {
+          this.teardownCharacteristicSubscription(subscriptionKey, currentSubscription);
+        }
+      }
+    );
+  }
+
+  private teardownCharacteristicSubscription(
+    subscriptionKey: string,
+    subscription: SharedCharacteristicSubscription
+  ): void {
+    if (subscription.nativeUnsubscribePending) {
+      logSharedSubscription(
+        `skip native unsubscribe pending key=${subscriptionKey} sources=${this.describeListenerSources(subscription)}`
+      );
+      return;
+    }
+
+    if (!subscription.nativeSubscribed) {
+      logSharedSubscription(
+        `skip native unsubscribe because not subscribed key=${subscriptionKey} listeners=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)} subscribePending=${subscription.nativeSubscribePending}`
+      );
+      if (!subscription.nativeSubscribePending && subscription.listeners.size === 0) {
+        delete this._sharedCharacteristicSubscriptions[subscriptionKey];
+      }
+      return;
+    }
+
+    logSharedSubscription(
+      `native unsubscribe start key=${subscriptionKey} listeners=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)}`
+    );
+    subscription.nativeUnsubscribePending = true;
+
+    BleNitroNative.unsubscribeFromCharacteristic(
+      subscription.deviceId,
+      subscription.serviceId,
+      subscription.characteristicId,
+      (success: boolean, error: string) => {
+        const currentSubscription = this._sharedCharacteristicSubscriptions[subscriptionKey];
+
+        if (!currentSubscription) {
+          return;
+        }
+
+        currentSubscription.nativeUnsubscribePending = false;
+        currentSubscription.nativeSubscribed = false;
+        logSharedSubscription(
+          `native unsubscribe done key=${subscriptionKey} listeners=${currentSubscription.listeners.size} sources=${this.describeListenerSources(currentSubscription)} success=${success}`
+        );
+
+        if (!success) {
+          console.warn(`[BleNitro] unsubscribeFromCharacteristic failed: ${error}`);
+        }
+
+        if (currentSubscription.listeners.size > 0) {
+          this.ensureCharacteristicSubscription(subscriptionKey, currentSubscription);
+          return;
+        }
+
+        if (!currentSubscription.nativeSubscribePending) {
+          delete this._sharedCharacteristicSubscriptions[subscriptionKey];
+        }
+      }
+    );
+  }
+
+  private removeCharacteristicListener(subscriptionKey: string, listenerId: number): void {
+    const subscription = this._sharedCharacteristicSubscriptions[subscriptionKey];
+
+    if (!subscription) {
+      return;
+    }
+
+    const listener = subscription.listeners.get(listenerId);
+    subscription.listeners.delete(listenerId);
+    logSharedSubscription(
+      `listener removed key=${subscriptionKey} listenerId=${listenerId} source=${listener?.source ?? 'unknown'} remaining=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)}`
+    );
+
+    if (subscription.listeners.size > 0) {
+      logSharedSubscription(
+        `keep native subscription key=${subscriptionKey} remaining=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)}`
+      );
+      return;
+    }
+
+    if (subscription.nativeSubscribePending) {
+      return;
+    }
+
+    if (subscription.nativeUnsubscribePending) {
+      return;
+    }
+
+    if (!subscription.nativeSubscribed) {
+      logSharedSubscription(`delete empty shared subscription key=${subscriptionKey} sources=-`);
+      delete this._sharedCharacteristicSubscriptions[subscriptionKey];
+      return;
+    }
+
+    this.teardownCharacteristicSubscription(subscriptionKey, subscription);
+  }
+
+  private clearCharacteristicSubscriptionsForDevice(deviceId: string): void {
+    Object.keys(this._sharedCharacteristicSubscriptions).forEach((subscriptionKey) => {
+      const subscription = this._sharedCharacteristicSubscriptions[subscriptionKey];
+
+      if (subscription?.deviceId === deviceId) {
+        logSharedSubscription(
+          `clear device subscriptions deviceId=${deviceId} key=${subscriptionKey} listeners=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)}`
+        );
+        delete this._sharedCharacteristicSubscriptions[subscriptionKey];
+      }
+    });
   }
 
   /**
@@ -285,6 +506,7 @@ export class BleNitroManager {
         onDisconnect ? (deviceId: string, interrupted: boolean, error: string) => {
           // Remove from connected devices when disconnected
           delete this._connectedDevices[deviceId];
+          this.clearCharacteristicSubscriptionsForDevice(deviceId);
           onDisconnect(deviceId, interrupted, error);
         } : undefined
       );
@@ -320,6 +542,7 @@ export class BleNitroManager {
     return new Promise((resolve, reject) => {
       // Check if already disconnected
       if (!this._connectedDevices[deviceId]) {
+        this.clearCharacteristicSubscriptionsForDevice(deviceId);
         resolve();
         return;
       }
@@ -329,6 +552,7 @@ export class BleNitroManager {
         (success: boolean, error: string) => {
           if (success) {
             delete this._connectedDevices[deviceId];
+            this.clearCharacteristicSubscriptionsForDevice(deviceId);
             resolve();
           } else {
             reject(new Error(error));
@@ -543,42 +767,56 @@ export class BleNitroManager {
     deviceId: string,
     serviceId: string,
     characteristicId: string,
-    callback: CharacteristicUpdateCallback
+    callback: CharacteristicUpdateCallback,
+    debugSource?: string
   ): Subscription {
     // Check if connected first
     if (!this._connectedDevices[deviceId]) {
       throw new Error('Device not connected');
     }
 
-    let _success = false;
-
-    BleNitroNative.subscribeToCharacteristic(
+    const normalizedServiceId = BleNitroManager.normalizeGattUUID(serviceId);
+    const normalizedCharacteristicId = BleNitroManager.normalizeGattUUID(characteristicId);
+    const subscriptionKey = BleNitroManager.createCharacteristicSubscriptionKey(
       deviceId,
-      BleNitroManager.normalizeGattUUID(serviceId),
-      BleNitroManager.normalizeGattUUID(characteristicId),
-      (charId: string, data: ArrayBuffer) => {
-        callback(charId, arrayBufferToByteArray(data));
-      },
-      (success, error) => {
-        _success = success;
-        if (!success) {
-          // Avoid crashing JS runtime on native callback errors (e.g. iOS "Encryption is insufficient").
-          console.warn(`[BleNitro] subscribeToCharacteristic failed: ${error}`);
-          return;
-        }
-      }
+      normalizedServiceId,
+      normalizedCharacteristicId
     );
+
+    let subscription = this._sharedCharacteristicSubscriptions[subscriptionKey];
+
+    if (!subscription) {
+      subscription = {
+        deviceId,
+        serviceId: normalizedServiceId,
+        characteristicId: normalizedCharacteristicId,
+        listeners: new Map<number, SharedCharacteristicListener>(),
+        nativeSubscribed: false,
+        nativeSubscribePending: false,
+        nativeUnsubscribePending: false,
+      };
+      this._sharedCharacteristicSubscriptions[subscriptionKey] = subscription;
+    }
+
+    const listenerId = this._nextSubscriptionListenerId++;
+    subscription.listeners.set(listenerId, {
+      callback,
+      source: debugSource,
+    });
+    logSharedSubscription(
+      `listener added key=${subscriptionKey} listenerId=${listenerId} source=${debugSource ?? 'unknown'} total=${subscription.listeners.size} sources=${this.describeListenerSources(subscription)}`
+    );
+    this.ensureCharacteristicSubscription(subscriptionKey, subscription);
+
+    let removed = false;
 
     return {
       remove: () => {
-        if (!_success) {
+        if (removed) {
           return;
         }
-        this.unsubscribeFromCharacteristic(
-          deviceId,
-          serviceId,
-          characteristicId
-        ).catch(() => {});
+        removed = true;
+        this.removeCharacteristicListener(subscriptionKey, listenerId);
       }
     };
   }

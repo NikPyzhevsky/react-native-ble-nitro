@@ -56,6 +56,8 @@ export declare function byteArrayToArrayBuffer(data: ByteArray): ArrayBuffer;
 export declare class BleNitroManager {
     private _isScanning;
     private _connectedDevices;
+    private _sharedCharacteristicSubscriptions;
+    private _nextSubscriptionListenerId;
     private _restoredStateCallback;
     private _restoredState;
     constructor(options?: BleNitroManagerOptions);
@@ -69,6 +71,12 @@ export declare class BleNitroManager {
      */
     static normalizeGattUUID(uuid: string): string;
     static normalizeGattUUIDs(uuids: string[]): string[];
+    private static createCharacteristicSubscriptionKey;
+    private describeListenerSources;
+    private ensureCharacteristicSubscription;
+    private teardownCharacteristicSubscription;
+    private removeCharacteristicListener;
+    private clearCharacteristicSubscriptionsForDevice;
     /**
      * Start scanning for Bluetooth devices
      * @param filter Optional scan filter
@@ -180,7 +188,7 @@ export declare class BleNitroManager {
      * @param callback Callback function called when notification is received
      * @returns Promise resolving when subscription is complete
      */
-    subscribeToCharacteristic(deviceId: string, serviceId: string, characteristicId: string, callback: CharacteristicUpdateCallback): Subscription;
+    subscribeToCharacteristic(deviceId: string, serviceId: string, characteristicId: string, callback: CharacteristicUpdateCallback, debugSource?: string): Subscription;
     /**
      * Unsubscribe from characteristic notifications
      * @param deviceId ID of the device

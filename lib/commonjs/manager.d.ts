@@ -180,7 +180,7 @@ export declare class BleNitroManager {
      * @param callback Callback function called when notification is received
      * @returns Promise resolving when subscription is complete
      */
-    subscribeToCharacteristic(deviceId: string, serviceId: string, characteristicId: string, callback: CharacteristicUpdateCallback): Subscription;
+    subscribeToCharacteristic(deviceId: string, serviceId: string, characteristicId: string, callback: CharacteristicUpdateCallback, debugSource?: string): Subscription;
     /**
      * Unsubscribe from characteristic notifications
      * @param deviceId ID of the device
